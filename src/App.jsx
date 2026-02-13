@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDownRight,
@@ -11,14 +11,15 @@ import {
   Mail,
   MapPin,
   Menu,
+  LogOut,
   Plus,
   Search,
   Settings,
   UsersRound,
   X,
 } from 'lucide-react';
+import UnicornScene from 'unicornstudio-react';
 import {
-  activitiesSeed,
   clientProfiles,
   dealsSeed,
   invoicesSeed,
@@ -49,6 +50,67 @@ const stageProbabilityMap = {
 };
 
 const demoToday = new Date('2026-02-13T09:00:00');
+const AUTH_USERNAME = 'krcoffelt@gmail.com';
+const AUTH_PASSWORD = 'Bvstars_1995';
+const AUTH_SESSION_KEY = 'hometown-crm-authenticated';
+const APP_STORAGE_KEYS = {
+  deals: 'hometown-crm-deals',
+  clients: 'hometown-crm-clients',
+  services: 'hometown-crm-services',
+  intakeLog: 'hometown-crm-intake-log',
+};
+
+function getInitialAuthState() {
+  if (typeof window === 'undefined') return false;
+  return window.sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
+}
+
+function loadStoredArray(key, fallback) {
+  if (typeof window === 'undefined') return fallback;
+
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (!raw) return fallback;
+
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return fallback;
+    return parsed;
+  } catch {
+    return fallback;
+  }
+}
+
+function buildId(prefix) {
+  const seed = Math.random().toString(36).slice(2, 7).toUpperCase();
+  return `${prefix}-${seed}`;
+}
+
+function getDatePlusDays(daysAhead = 14) {
+  const date = new Date();
+  date.setDate(date.getDate() + daysAhead);
+  return date.toISOString().slice(0, 10);
+}
+
+function getDefaultServicesFromDeals(sourceDeals) {
+  const uniqueServices = [...new Set(sourceDeals.map((deal) => deal.service.trim()))];
+  return uniqueServices.map((service, index) => ({
+    id: `SRV-${String(index + 1).padStart(3, '0')}`,
+    name: service,
+    category: index % 2 === 0 ? 'Growth Marketing' : 'Creative',
+    baseRate: 2400 + index * 250,
+  }));
+}
+
+function getInitialLeadForm(services = []) {
+  return {
+    company: '',
+    contact: '',
+    service: services[0]?.name ?? '',
+    value: '',
+    stage: 'New Lead',
+    expectedClose: getDatePlusDays(14),
+  };
+}
 
 function formatCurrency(value) {
   return new Intl.NumberFormat('en-US', {
@@ -85,11 +147,75 @@ function getInvoiceStatus(invoice) {
 }
 
 function App() {
+  const [isAuthenticated, setIsAuthenticated] = useState(getInitialAuthState);
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchValue, setSearchValue] = useState('');
-  const [deals, setDeals] = useState(dealsSeed);
-  const [selectedClientId, setSelectedClientId] = useState(clientProfiles[0]?.id ?? '');
+  const [clients, setClients] = useState(() =>
+    loadStoredArray(APP_STORAGE_KEYS.clients, clientProfiles),
+  );
+  const [deals, setDeals] = useState(() => loadStoredArray(APP_STORAGE_KEYS.deals, dealsSeed));
+  const [services, setServices] = useState(() =>
+    loadStoredArray(APP_STORAGE_KEYS.services, getDefaultServicesFromDeals(dealsSeed)),
+  );
+  const [intakeLog, setIntakeLog] = useState(() =>
+    loadStoredArray(APP_STORAGE_KEYS.intakeLog, []),
+  );
+  const [selectedClientId, setSelectedClientId] = useState('');
+  const [quickEntryType, setQuickEntryType] = useState('lead');
+  const [leadForm, setLeadForm] = useState(() =>
+    getInitialLeadForm(loadStoredArray(APP_STORAGE_KEYS.services, getDefaultServicesFromDeals(dealsSeed))),
+  );
+  const [clientForm, setClientForm] = useState({
+    company: '',
+    industry: '',
+    contactName: '',
+    email: '',
+    phone: '',
+    retainer: '',
+  });
+  const [serviceForm, setServiceForm] = useState({
+    name: '',
+    category: 'Growth Marketing',
+    baseRate: '',
+  });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(APP_STORAGE_KEYS.clients, JSON.stringify(clients));
+  }, [clients]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(APP_STORAGE_KEYS.deals, JSON.stringify(deals));
+  }, [deals]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(APP_STORAGE_KEYS.services, JSON.stringify(services));
+  }, [services]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.localStorage.setItem(APP_STORAGE_KEYS.intakeLog, JSON.stringify(intakeLog));
+  }, [intakeLog]);
+
+  useEffect(() => {
+    if (!selectedClientId && clients.length) {
+      setSelectedClientId(clients[0].id);
+      return;
+    }
+
+    if (selectedClientId && !clients.some((client) => client.id === selectedClientId)) {
+      setSelectedClientId(clients[0]?.id ?? '');
+    }
+  }, [clients, selectedClientId]);
+
+  useEffect(() => {
+    if (services.length && !leadForm.service) {
+      setLeadForm((current) => ({ ...current, service: services[0].name }));
+    }
+  }, [services, leadForm.service]);
 
   const filteredDeals = useMemo(() => {
     if (!searchValue.trim()) return deals;
@@ -162,7 +288,7 @@ function App() {
   }, [convertedDeals]);
 
   const clientSummaries = useMemo(() => {
-    return clientProfiles.map((profile) => {
+    return clients.map((profile) => {
       const clientDeals = deals.filter((deal) => deal.companyId === profile.id);
       const activeDeals = clientDeals.filter(
         (deal) => deal.stage !== 'Won' && deal.stage !== 'Lost',
@@ -170,14 +296,14 @@ function App() {
       const wonDeals = clientDeals.filter((deal) => deal.stage === 'Won');
       const totalValue = clientDeals.reduce((sum, deal) => sum + deal.value, 0);
 
-      let statusLabel = 'Nurturing';
+      let statusLabel = 'Watch';
       let statusClass = 'is-neutral';
 
-      if (activeDeals.some((deal) => deal.stage === 'Negotiation' || deal.stage === 'Proposal Sent')) {
-        statusLabel = 'Hot';
-        statusClass = 'is-hot';
-      } else if (wonDeals.length) {
-        statusLabel = 'Active Client';
+      if (activeDeals.some((deal) => deal.stage === 'Negotiation')) {
+        statusLabel = 'High Priority';
+        statusClass = 'is-dark';
+      } else if (wonDeals.length || profile.retainer > 0) {
+        statusLabel = 'Active';
         statusClass = 'is-good';
       }
 
@@ -189,7 +315,7 @@ function App() {
         statusClass,
       };
     });
-  }, [deals]);
+  }, [clients, deals]);
 
   const selectedClient = useMemo(() => {
     if (!clientSummaries.length) return null;
@@ -215,8 +341,8 @@ function App() {
   }, [selectedClient]);
 
   const monthlyRetainerTotal = useMemo(() => {
-    return clientProfiles.reduce((sum, client) => sum + client.retainer, 0);
-  }, []);
+    return clients.reduce((sum, client) => sum + Number(client.retainer || 0), 0);
+  }, [clients]);
 
   const nextActions = useMemo(() => {
     return deals
@@ -225,9 +351,193 @@ function App() {
       .slice(0, 5);
   }, [deals]);
 
+  const openLeadCount = openDeals.length;
+  const activeClientCount = clientSummaries.filter(
+    (client) => client.activeDealCount > 0 || Number(client.retainer || 0) > 0,
+  ).length;
+  const overdueInvoiceCount = invoicesSeed.filter(
+    (invoice) => getInvoiceStatus(invoice) === 'Overdue',
+  ).length;
+
   function handleViewChange(nextView) {
     setActiveView(nextView);
     setMobileNavOpen(false);
+  }
+
+  function handleLoginAttempt(username, password) {
+    const isValid = username === AUTH_USERNAME && password === AUTH_PASSWORD;
+    if (isValid) {
+      setIsAuthenticated(true);
+      if (typeof window !== 'undefined') {
+        window.sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+      }
+    }
+    return isValid;
+  }
+
+  function handleLogout() {
+    setIsAuthenticated(false);
+    setMobileNavOpen(false);
+    if (typeof window !== 'undefined') {
+      window.sessionStorage.removeItem(AUTH_SESSION_KEY);
+    }
+  }
+
+  function handleQuickAction(entryType) {
+    setActiveView('dashboard');
+    setQuickEntryType(entryType);
+  }
+
+  function addIntakeLog(type, title, detail) {
+    const createdAt = new Date();
+    setIntakeLog((current) => {
+      const next = [
+        {
+          id: buildId('LOG'),
+          type,
+          title,
+          detail,
+          createdAt: createdAt.toLocaleString(),
+        },
+        ...current,
+      ];
+      return next.slice(0, 12);
+    });
+  }
+
+  function handleLeadFormChange(field, value) {
+    setLeadForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleClientFormChange(field, value) {
+    setClientForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleServiceFormChange(field, value) {
+    setServiceForm((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleLeadCreate(event) {
+    event.preventDefault();
+    const company = leadForm.company.trim();
+    const contact = leadForm.contact.trim();
+    const service = leadForm.service.trim();
+    const stage = leadForm.stage;
+    const expectedClose = leadForm.expectedClose || getDatePlusDays(14);
+    const parsedValue = Number(leadForm.value);
+    const value = Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue : 0;
+
+    if (!company || !contact || !service || !value) return;
+
+    const matchingClient = clients.find(
+      (client) => client.company.trim().toLowerCase() === company.toLowerCase(),
+    );
+
+    let companyId = matchingClient?.id ?? '';
+
+    if (!companyId) {
+      const createdClient = {
+        id: buildId('CL'),
+        company,
+        industry: 'Prospect',
+        city: 'Unassigned',
+        contactName: contact,
+        email: '',
+        phone: '',
+        retainer: 0,
+      };
+
+      companyId = createdClient.id;
+      setClients((current) => [createdClient, ...current]);
+    }
+
+    const createdLead = {
+      id: buildId('DL'),
+      companyId,
+      company,
+      contact,
+      owner: 'You',
+      service,
+      value,
+      stage,
+      probability: stageProbabilityMap[stage] ?? 20,
+      expectedClose,
+      source: 'Manual Entry',
+      lastTouch: new Date().toISOString().slice(0, 10),
+      nextAction: 'Follow up in 24 hours',
+    };
+
+    setDeals((current) => [createdLead, ...current]);
+    addIntakeLog('Lead', `${company} lead added`, `${stage} · ${formatCurrency(value)}`);
+    setLeadForm(getInitialLeadForm(services));
+  }
+
+  function handleClientCreate(event) {
+    event.preventDefault();
+    const company = clientForm.company.trim();
+    if (!company) return;
+
+    const contactName = clientForm.contactName.trim() || 'Primary Contact';
+    const parsedRetainer = Number(clientForm.retainer);
+    const retainer = Number.isFinite(parsedRetainer) && parsedRetainer > 0 ? parsedRetainer : 0;
+
+    const createdClient = {
+      id: buildId('CL'),
+      company,
+      industry: clientForm.industry.trim() || 'General',
+      city: 'Local',
+      contactName,
+      email: clientForm.email.trim(),
+      phone: clientForm.phone.trim(),
+      retainer,
+    };
+
+    setClients((current) => [createdClient, ...current]);
+    addIntakeLog(
+      'Client',
+      `${company} client added`,
+      `Retainer ${formatCurrency(retainer)} / month`,
+    );
+    setClientForm({
+      company: '',
+      industry: '',
+      contactName: '',
+      email: '',
+      phone: '',
+      retainer: '',
+    });
+  }
+
+  function handleServiceCreate(event) {
+    event.preventDefault();
+    const name = serviceForm.name.trim();
+    if (!name) return;
+
+    const exists = services.some((service) => service.name.toLowerCase() === name.toLowerCase());
+    if (exists) return;
+
+    const parsedRate = Number(serviceForm.baseRate);
+    const baseRate = Number.isFinite(parsedRate) && parsedRate > 0 ? parsedRate : 0;
+
+    const createdService = {
+      id: buildId('SRV'),
+      name,
+      category: serviceForm.category.trim() || 'Growth Marketing',
+      baseRate,
+    };
+
+    setServices((current) => [createdService, ...current]);
+    addIntakeLog(
+      'Service',
+      `${name} service added`,
+      `${createdService.category} · ${formatCurrency(baseRate)} base`,
+    );
+    setServiceForm({
+      name: '',
+      category: 'Growth Marketing',
+      baseRate: '',
+    });
+    setLeadForm((current) => ({ ...current, service: name }));
   }
 
   function handleDealDragStart(event, dealId) {
@@ -252,32 +562,9 @@ function App() {
     });
   }
 
-  const metricCards = [
-    {
-      label: 'Open Pipeline',
-      value: formatCurrency(totalPipelineValue),
-      deltaText: '+8.4%',
-      trend: 'up',
-    },
-    {
-      label: 'Weighted Forecast',
-      value: formatCurrency(weightedForecast),
-      deltaText: '+5.1%',
-      trend: 'up',
-    },
-    {
-      label: 'Won This Month',
-      value: formatCurrency(wonThisMonth),
-      deltaText: `${winRate.toFixed(1)}% win rate`,
-      trend: 'up',
-    },
-    {
-      label: 'Collected This Month',
-      value: formatCurrency(collectedThisMonth),
-      deltaText: `${formatCurrency(overdueInvoiceAmount)} overdue`,
-      trend: 'down',
-    },
-  ];
+  if (!isAuthenticated) {
+    return <LoginView onSubmit={handleLoginAttempt} />;
+  }
 
   return (
     <div className="app-shell">
@@ -295,6 +582,8 @@ function App() {
           onOpenMobileNav={() => setMobileNavOpen(true)}
           onSearchChange={setSearchValue}
           searchValue={searchValue}
+          onQuickAction={handleQuickAction}
+          onLogout={handleLogout}
         />
 
         <AnimatePresence mode="wait">
@@ -308,12 +597,33 @@ function App() {
           >
             {activeView === 'dashboard' ? (
               <DashboardView
-                metricCards={metricCards}
-                stageData={stageData}
                 deals={deals}
-                meetings={meetingsSeed}
-                activities={activitiesSeed}
+                clients={clientSummaries}
+                services={services}
+                stageData={stageData}
                 nextActions={nextActions}
+                collectedThisMonth={collectedThisMonth}
+                weightedForecast={weightedForecast}
+                totalPipelineValue={totalPipelineValue}
+                monthlyRetainerTotal={monthlyRetainerTotal}
+                overdueInvoiceAmount={overdueInvoiceAmount}
+                overdueInvoiceCount={overdueInvoiceCount}
+                openLeadCount={openLeadCount}
+                activeClientCount={activeClientCount}
+                wonThisMonth={wonThisMonth}
+                winRate={winRate}
+                quickEntryType={quickEntryType}
+                onQuickEntryTypeChange={setQuickEntryType}
+                leadForm={leadForm}
+                clientForm={clientForm}
+                serviceForm={serviceForm}
+                onLeadFormChange={handleLeadFormChange}
+                onClientFormChange={handleClientFormChange}
+                onServiceFormChange={handleServiceFormChange}
+                onLeadCreate={handleLeadCreate}
+                onClientCreate={handleClientCreate}
+                onServiceCreate={handleServiceCreate}
+                intakeLog={intakeLog}
               />
             ) : null}
 
@@ -355,6 +665,87 @@ function App() {
           </motion.section>
         </AnimatePresence>
       </main>
+    </div>
+  );
+}
+
+function LoginView({ onSubmit }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
+
+  function handleSubmit(event) {
+    event.preventDefault();
+    const isValid = onSubmit(username.trim(), password);
+    if (!isValid) {
+      setErrorMessage('Invalid credentials. Please try again.');
+      return;
+    }
+
+    setErrorMessage('');
+  }
+
+  return (
+    <div className="auth-shell">
+      <div className="auth-scene" aria-hidden="true">
+        <div className="auth-scene-fallback" />
+        <UnicornScene
+          projectId="impgffSPUoBe2l8bHxyv"
+          sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.0.5/dist/unicornStudio.umd.js"
+          width="100%"
+          height="100%"
+          lazyLoad
+          production
+        />
+        <div className="auth-overlay" />
+      </div>
+
+      <motion.section
+        className="auth-card"
+        initial={{ opacity: 0, y: 16 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.32 }}
+      >
+        <div className="auth-brand">
+          <div className="brand-badge">HC</div>
+          <div>
+            <h1>Hometown CRM</h1>
+            <p>Marketing Agency Dashboard</p>
+          </div>
+        </div>
+
+        <form className="auth-form" onSubmit={handleSubmit}>
+          <label>
+            Username
+            <input
+              type="email"
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+              placeholder="Enter your email"
+              required
+            />
+          </label>
+
+          <label>
+            Password
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              placeholder="Enter your password"
+              required
+            />
+          </label>
+
+          {errorMessage ? <p className="auth-error">{errorMessage}</p> : null}
+
+          <button type="submit" className="auth-submit">
+            Sign in
+          </button>
+        </form>
+      </motion.section>
     </div>
   );
 }
@@ -431,7 +822,7 @@ function Sidebar({ activeView, onViewChange, mobileNavOpen, onCloseMobileNav }) 
   );
 }
 
-function TopBar({ onOpenMobileNav, searchValue, onSearchChange }) {
+function TopBar({ onOpenMobileNav, searchValue, onSearchChange, onQuickAction, onLogout }) {
   return (
     <header className="topbar">
       <div className="left-group">
@@ -451,16 +842,24 @@ function TopBar({ onOpenMobileNav, searchValue, onSearchChange }) {
       </div>
 
       <div className="topbar-actions">
-        <button className="action-button secondary">
+        <button className="action-button secondary" onClick={() => onQuickAction('lead')}>
           <Plus size={16} />
           <span>New Lead</span>
         </button>
-        <button className="action-button primary">
+        <button className="action-button secondary" onClick={() => onQuickAction('client')}>
           <Plus size={16} />
-          <span>New Invoice</span>
+          <span>New Client</span>
+        </button>
+        <button className="action-button primary" onClick={() => onQuickAction('service')}>
+          <Plus size={16} />
+          <span>New Service</span>
         </button>
         <button className="icon-button">
           <Bell size={17} />
+        </button>
+        <button className="action-button secondary" onClick={onLogout}>
+          <LogOut size={15} />
+          <span>Logout</span>
         </button>
       </div>
     </header>
@@ -480,84 +879,89 @@ function GlassCard({ className = '', children, delay = 0 }) {
   );
 }
 
-function DashboardView({ metricCards, stageData, deals, meetings, activities, nextActions }) {
+function DashboardView({
+  deals,
+  clients,
+  services,
+  stageData,
+  nextActions,
+  collectedThisMonth,
+  weightedForecast,
+  totalPipelineValue,
+  monthlyRetainerTotal,
+  overdueInvoiceAmount,
+  overdueInvoiceCount,
+  openLeadCount,
+  activeClientCount,
+  wonThisMonth,
+  winRate,
+  quickEntryType,
+  onQuickEntryTypeChange,
+  leadForm,
+  clientForm,
+  serviceForm,
+  onLeadFormChange,
+  onClientFormChange,
+  onServiceFormChange,
+  onLeadCreate,
+  onClientCreate,
+  onServiceCreate,
+  intakeLog,
+}) {
+  const openLeads = deals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost');
+  const averageLeadValue = openLeads.length
+    ? openLeads.reduce((sum, deal) => sum + deal.value, 0) / openLeads.length
+    : 0;
   const highestStageValue = Math.max(...stageData.map((stage) => stage.value), 1);
-  const topDeals = [...deals]
-    .filter((deal) => deal.stage !== 'Lost')
-    .sort((a, b) => b.value - a.value)
+  const closingSoon = [...openLeads]
+    .sort((a, b) => new Date(a.expectedClose) - new Date(b.expectedClose))
     .slice(0, 6);
+  const clientRankings = [...clients]
+    .sort((a, b) => Number(b.retainer || 0) + b.totalValue * 0.03 - (Number(a.retainer || 0) + a.totalValue * 0.03))
+    .slice(0, 6);
+  const stageHighlights = stageData.filter((stage) => stage.stage !== 'Lost');
+  const coveragePercent = totalPipelineValue
+    ? Math.round((weightedForecast / totalPipelineValue) * 100)
+    : 0;
 
   return (
-    <div className="dashboard-view">
+    <div className="dashboard-focus">
       <div className="view-header">
-        <h1>Agency Pipeline Dashboard</h1>
-        <p>Track lead progress, expected revenue, and next client actions in one workspace.</p>
+        <h1>Small Agency Command Center</h1>
+        <p>Simple visibility across leads, clients, and revenue with quick manual capture.</p>
       </div>
 
-      <section className="metric-grid">
-        {metricCards.map((metric, index) => (
-          <GlassCard key={metric.label} className="metric-card" delay={index * 0.05}>
-            <p className="metric-label">{metric.label}</p>
-            <h2>{metric.value}</h2>
-            <p className={`metric-delta ${metric.trend}`}>
-              {metric.trend === 'up' ? <ArrowUpRight size={15} /> : <ArrowDownRight size={15} />}
-              {metric.deltaText}
-            </p>
-          </GlassCard>
-        ))}
+      <section className="agency-metric-grid">
+        <GlassCard className="metric-card agency-metric">
+          <p className="metric-label">Open Leads</p>
+          <h2>{openLeadCount}</h2>
+          <p className="metric-delta up">{formatCurrency(totalPipelineValue)} pipeline value</p>
+        </GlassCard>
+
+        <GlassCard className="metric-card agency-metric">
+          <p className="metric-label">Active Clients</p>
+          <h2>{activeClientCount}</h2>
+          <p className="metric-delta up">{formatCurrency(monthlyRetainerTotal)} monthly retainers</p>
+        </GlassCard>
+
+        <GlassCard className="metric-card agency-metric">
+          <p className="metric-label">Revenue Snapshot</p>
+          <h2>{formatCurrency(collectedThisMonth + wonThisMonth)}</h2>
+          <p className="metric-delta up">{formatCurrency(weightedForecast)} weighted forecast</p>
+        </GlassCard>
+
+        <GlassCard className="metric-card agency-metric">
+          <p className="metric-label">Collections Risk</p>
+          <h2>{formatCurrency(overdueInvoiceAmount)}</h2>
+          <p className="metric-delta down">{overdueInvoiceCount} overdue invoices</p>
+        </GlassCard>
       </section>
 
-      <section className="dashboard-grid">
-        <GlassCard className="panel stage-panel">
+      <section className="agency-dashboard-grid">
+        <GlassCard className="panel lead-radar-panel">
           <div className="panel-head">
-            <h3>Pipeline By Stage</h3>
-            <span>{deals.length} deals tracked</span>
-          </div>
-          <div className="stage-chart">
-            {stageData.map((stage, index) => (
-              <div key={stage.stage} className="stage-column">
-                <div className="stage-track">
-                  <motion.div
-                    className="stage-fill"
-                    initial={{ height: 0 }}
-                    animate={{
-                      height: `${Math.max((stage.value / highestStageValue) * 100, 5)}%`,
-                    }}
-                    transition={{ duration: 0.45, delay: index * 0.05 }}
-                  />
-                </div>
-                <p>{stage.stage}</p>
-                <strong>{formatCompactCurrency(stage.value)}</strong>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
-        <GlassCard className="panel meetings-panel">
-          <div className="panel-head">
-            <h3>Upcoming Meetings</h3>
-            <span>This week</span>
-          </div>
-          <div className="meeting-list">
-            {meetings.map((meeting) => (
-              <div key={meeting.id} className="meeting-row">
-                <div>
-                  <h4>{meeting.title}</h4>
-                  <p>{meeting.company}</p>
-                </div>
-                <div className="meeting-meta">
-                  <span>{meeting.time}</span>
-                  <small>{meeting.owner}</small>
-                </div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
-        <GlassCard className="panel deals-table-panel">
-          <div className="panel-head">
-            <h3>Top Opportunities</h3>
-            <span>Sorted by deal value</span>
+            <h3>Lead Radar</h3>
+            <span>{openLeads.length} active leads</span>
           </div>
           <div className="table-scroll">
             <table>
@@ -565,21 +969,19 @@ function DashboardView({ metricCards, stageData, deals, meetings, activities, ne
                 <tr>
                   <th>Company</th>
                   <th>Stage</th>
-                  <th>Owner</th>
-                  <th>Close Date</th>
+                  <th>Service</th>
+                  <th>Close</th>
                   <th>Value</th>
                 </tr>
               </thead>
               <tbody>
-                {topDeals.map((deal) => (
+                {closingSoon.map((deal) => (
                   <tr key={deal.id}>
                     <td>{deal.company}</td>
                     <td>
-                      <span className={`status-pill ${deal.stage === 'Won' ? 'success' : ''}`}>
-                        {deal.stage}
-                      </span>
+                      <span className="status-pill is-neutral">{deal.stage}</span>
                     </td>
-                    <td>{deal.owner}</td>
+                    <td>{deal.service}</td>
                     <td>{deal.expectedClose}</td>
                     <td>{formatCurrency(deal.value)}</td>
                   </tr>
@@ -587,33 +989,294 @@ function DashboardView({ metricCards, stageData, deals, meetings, activities, ne
               </tbody>
             </table>
           </div>
-        </GlassCard>
-
-        <GlassCard className="panel activity-panel">
-          <div className="panel-head">
-            <h3>Activity Feed</h3>
-            <span>Latest actions</span>
-          </div>
-          <div className="activity-feed">
-            {activities.map((activity) => (
-              <div key={activity.id} className="activity-row">
-                <div className="activity-type">{activity.type}</div>
+          <div className="stage-strip-list">
+            {stageHighlights.map((stage) => (
+              <div key={stage.stage} className="stage-strip-row">
                 <div>
-                  <h4>{activity.company}</h4>
-                  <p>{activity.detail}</p>
-                  <small>
-                    {activity.owner} · {activity.date}
-                  </small>
+                  <strong>{stage.stage}</strong>
+                  <span>
+                    {stage.count} · {formatCompactCurrency(stage.value)}
+                  </span>
+                </div>
+                <div className="stage-strip-track">
+                  <motion.span
+                    initial={{ width: 0 }}
+                    animate={{
+                      width: `${Math.max((stage.value / highestStageValue) * 100, 3)}%`,
+                    }}
+                    transition={{ duration: 0.35 }}
+                  />
                 </div>
               </div>
             ))}
           </div>
         </GlassCard>
 
-        <GlassCard className="panel actions-panel">
+        <GlassCard className="panel quick-capture-panel">
           <div className="panel-head">
-            <h3>Next Critical Actions</h3>
-            <span>Ordered by close date</span>
+            <h3>Quick Capture Hub</h3>
+            <span>Manual entry for leads, clients, services</span>
+          </div>
+          <div className="capture-tabs">
+            <button
+              className={quickEntryType === 'lead' ? 'active' : ''}
+              onClick={() => onQuickEntryTypeChange('lead')}
+            >
+              Lead
+            </button>
+            <button
+              className={quickEntryType === 'client' ? 'active' : ''}
+              onClick={() => onQuickEntryTypeChange('client')}
+            >
+              Client
+            </button>
+            <button
+              className={quickEntryType === 'service' ? 'active' : ''}
+              onClick={() => onQuickEntryTypeChange('service')}
+            >
+              Service
+            </button>
+          </div>
+
+          {quickEntryType === 'lead' ? (
+            <form className="capture-form" onSubmit={onLeadCreate}>
+              <div className="capture-grid two">
+                <label>
+                  Company
+                  <input
+                    type="text"
+                    value={leadForm.company}
+                    onChange={(event) => onLeadFormChange('company', event.target.value)}
+                    placeholder="Acme Co."
+                    required
+                  />
+                </label>
+                <label>
+                  Contact
+                  <input
+                    type="text"
+                    value={leadForm.contact}
+                    onChange={(event) => onLeadFormChange('contact', event.target.value)}
+                    placeholder="Name"
+                    required
+                  />
+                </label>
+                <label>
+                  Service
+                  <input
+                    type="text"
+                    list="service-options"
+                    value={leadForm.service}
+                    onChange={(event) => onLeadFormChange('service', event.target.value)}
+                    placeholder="Select or type service"
+                    required
+                  />
+                  <datalist id="service-options">
+                    {services.map((service) => (
+                      <option key={service.id} value={service.name} />
+                    ))}
+                  </datalist>
+                </label>
+                <label>
+                  Lead Value
+                  <input
+                    type="number"
+                    min="0"
+                    value={leadForm.value}
+                    onChange={(event) => onLeadFormChange('value', event.target.value)}
+                    placeholder="4500"
+                    required
+                  />
+                </label>
+                <label>
+                  Stage
+                  <select
+                    value={leadForm.stage}
+                    onChange={(event) => onLeadFormChange('stage', event.target.value)}
+                  >
+                    {pipelineStages
+                      .filter((stage) => stage !== 'Won' && stage !== 'Lost')
+                      .map((stage) => (
+                        <option key={stage} value={stage}>
+                          {stage}
+                        </option>
+                      ))}
+                  </select>
+                </label>
+                <label>
+                  Expected Close
+                  <input
+                    type="date"
+                    value={leadForm.expectedClose}
+                    onChange={(event) => onLeadFormChange('expectedClose', event.target.value)}
+                    required
+                  />
+                </label>
+              </div>
+              <div className="capture-footer">
+                <p>New companies are auto-created as prospect clients.</p>
+                <button type="submit" className="capture-submit">
+                  Add Lead
+                </button>
+              </div>
+            </form>
+          ) : null}
+
+          {quickEntryType === 'client' ? (
+            <form className="capture-form" onSubmit={onClientCreate}>
+              <div className="capture-grid two">
+                <label>
+                  Company
+                  <input
+                    type="text"
+                    value={clientForm.company}
+                    onChange={(event) => onClientFormChange('company', event.target.value)}
+                    placeholder="Client company"
+                    required
+                  />
+                </label>
+                <label>
+                  Industry
+                  <input
+                    type="text"
+                    value={clientForm.industry}
+                    onChange={(event) => onClientFormChange('industry', event.target.value)}
+                    placeholder="Healthcare, Legal, Home Services..."
+                  />
+                </label>
+                <label>
+                  Contact
+                  <input
+                    type="text"
+                    value={clientForm.contactName}
+                    onChange={(event) => onClientFormChange('contactName', event.target.value)}
+                    placeholder="Primary contact"
+                  />
+                </label>
+                <label>
+                  Email
+                  <input
+                    type="email"
+                    value={clientForm.email}
+                    onChange={(event) => onClientFormChange('email', event.target.value)}
+                    placeholder="client@company.com"
+                  />
+                </label>
+                <label>
+                  Phone
+                  <input
+                    type="text"
+                    value={clientForm.phone}
+                    onChange={(event) => onClientFormChange('phone', event.target.value)}
+                    placeholder="(000) 000-0000"
+                  />
+                </label>
+                <label>
+                  Monthly Retainer
+                  <input
+                    type="number"
+                    min="0"
+                    value={clientForm.retainer}
+                    onChange={(event) => onClientFormChange('retainer', event.target.value)}
+                    placeholder="3000"
+                  />
+                </label>
+              </div>
+              <div className="capture-footer">
+                <p>Clients appear instantly in the client workspace and revenue cards.</p>
+                <button type="submit" className="capture-submit">
+                  Add Client
+                </button>
+              </div>
+            </form>
+          ) : null}
+
+          {quickEntryType === 'service' ? (
+            <form className="capture-form" onSubmit={onServiceCreate}>
+              <div className="capture-grid two">
+                <label>
+                  Service Name
+                  <input
+                    type="text"
+                    value={serviceForm.name}
+                    onChange={(event) => onServiceFormChange('name', event.target.value)}
+                    placeholder="Meta Ad Management"
+                    required
+                  />
+                </label>
+                <label>
+                  Category
+                  <input
+                    type="text"
+                    value={serviceForm.category}
+                    onChange={(event) => onServiceFormChange('category', event.target.value)}
+                    placeholder="Growth Marketing"
+                  />
+                </label>
+                <label>
+                  Base Monthly Rate
+                  <input
+                    type="number"
+                    min="0"
+                    value={serviceForm.baseRate}
+                    onChange={(event) => onServiceFormChange('baseRate', event.target.value)}
+                    placeholder="2400"
+                  />
+                </label>
+              </div>
+              <div className="capture-footer">
+                <p>Services can be selected directly in the lead entry workflow.</p>
+                <button type="submit" className="capture-submit">
+                  Add Service
+                </button>
+              </div>
+            </form>
+          ) : null}
+        </GlassCard>
+
+        <GlassCard className="panel client-priority-panel">
+          <div className="panel-head">
+            <h3>Client Priority</h3>
+            <span>{clients.length} total clients</span>
+          </div>
+          <div className="client-priority-list">
+            {clientRankings.map((client) => (
+              <div key={client.id} className="client-priority-row">
+                <div>
+                  <h4>{client.company}</h4>
+                  <p>{client.activeDealCount} active leads</p>
+                </div>
+                <div className="client-priority-meta">
+                  <strong>{formatCurrency(Number(client.retainer || 0))}</strong>
+                  <span>{formatCompactCurrency(client.totalValue)} pipeline</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="panel revenue-clarity-panel">
+          <div className="panel-head">
+            <h3>Revenue Clarity</h3>
+            <span>{coveragePercent}% forecast coverage</span>
+          </div>
+          <div className="revenue-clarity-grid">
+            <div className="clarity-tile">
+              <p>Avg Lead Value</p>
+              <strong>{formatCurrency(averageLeadValue)}</strong>
+            </div>
+            <div className="clarity-tile">
+              <p>Monthly Retainers</p>
+              <strong>{formatCurrency(monthlyRetainerTotal)}</strong>
+            </div>
+            <div className="clarity-tile">
+              <p>Won This Month</p>
+              <strong>{formatCurrency(wonThisMonth)}</strong>
+            </div>
+            <div className="clarity-tile">
+              <p>Win Rate</p>
+              <strong>{winRate.toFixed(1)}%</strong>
+            </div>
           </div>
           <div className="next-actions">
             {nextActions.map((deal) => (
@@ -628,6 +1291,29 @@ function DashboardView({ metricCards, stageData, deals, meetings, activities, ne
                 </div>
               </div>
             ))}
+          </div>
+        </GlassCard>
+
+        <GlassCard className="panel intake-log-panel">
+          <div className="panel-head">
+            <h3>Recent Manual Inputs</h3>
+            <span>{intakeLog.length} recent entries</span>
+          </div>
+          <div className="intake-log-list">
+            {intakeLog.length ? (
+              intakeLog.map((entry) => (
+                <div key={entry.id} className="intake-log-row">
+                  <span className="status-pill is-dark">{entry.type}</span>
+                  <div>
+                    <h4>{entry.title}</h4>
+                    <p>{entry.detail}</p>
+                    <small>{entry.createdAt}</small>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <p className="empty-note">No manual entries yet. Use Quick Capture Hub to add your first lead.</p>
+            )}
           </div>
         </GlassCard>
       </section>
