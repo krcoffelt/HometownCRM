@@ -8,13 +8,15 @@ import {
   DollarSign,
   KanbanSquare,
   LayoutDashboard,
-  Mail,
-  MapPin,
+  Loader2,
+  MessageSquare,
   Menu,
   LogOut,
   Plus,
   Search,
+  SendHorizontal,
   Settings,
+  Sparkles,
   UsersRound,
   X,
 } from 'lucide-react';
@@ -24,7 +26,6 @@ import {
   dealsSeed,
   invoicesSeed,
   meetingsSeed,
-  monthlyRevenueSeed,
   paymentsSeed,
   pipelineStages,
   tasksSeed,
@@ -48,6 +49,8 @@ const stageProbabilityMap = {
   Won: 100,
   Lost: 0,
 };
+
+const userIdFallback = 'krcoffelt@gmail.com';
 
 const demoToday = new Date('2026-02-13T09:00:00');
 const AUTH_USERNAME = 'krcoffelt@gmail.com';
@@ -109,6 +112,19 @@ function getInitialLeadForm(services = []) {
     value: '',
     stage: 'New Lead',
     expectedClose: getDatePlusDays(14),
+  };
+}
+
+function getDefaultLeadEditorState() {
+  return {
+    id: '',
+    company: '',
+    contact: '',
+    service: '',
+    value: '',
+    stage: 'New Lead',
+    expectedClose: '',
+    nextAction: '',
   };
 }
 
@@ -179,6 +195,33 @@ function App() {
     category: 'Growth Marketing',
     baseRate: '',
   });
+  const [aiSummary, setAiSummary] = useState('');
+  const [aiModel, setAiModel] = useState('gpt-5-nano');
+  const [aiLoading, setAiLoading] = useState(false);
+  const [aiError, setAiError] = useState('');
+  const [agentMessages, setAgentMessages] = useState([
+    {
+      id: 'CHAT-WELCOME',
+      role: 'assistant',
+      text:
+        'CRM Agent is ready. Tell me what changed and I will update leads, clients, and services for you.',
+      actions: [],
+    },
+  ]);
+  const [agentInput, setAgentInput] = useState('');
+  const [agentLoading, setAgentLoading] = useState(false);
+  const [agentError, setAgentError] = useState('');
+  const [clientEditor, setClientEditor] = useState({
+    id: '',
+    company: '',
+    industry: '',
+    contactName: '',
+    email: '',
+    phone: '',
+    retainer: '',
+  });
+  const [leadEditorOpen, setLeadEditorOpen] = useState(false);
+  const [leadEditorState, setLeadEditorState] = useState(getDefaultLeadEditorState);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -340,9 +383,39 @@ function App() {
     return invoicesSeed.filter((invoice) => invoice.companyId === selectedClient.id);
   }, [selectedClient]);
 
+  useEffect(() => {
+    if (!selectedClient) return;
+
+    setClientEditor({
+      id: selectedClient.id,
+      company: selectedClient.company || '',
+      industry: selectedClient.industry || '',
+      contactName: selectedClient.contactName || '',
+      email: selectedClient.email || '',
+      phone: selectedClient.phone || '',
+      retainer: String(selectedClient.retainer || ''),
+    });
+  }, [selectedClient]);
+
   const monthlyRetainerTotal = useMemo(() => {
     return clients.reduce((sum, client) => sum + Number(client.retainer || 0), 0);
   }, [clients]);
+
+  const revenue30d = useMemo(() => {
+    const dailyBase = Math.max(Math.round((collectedThisMonth + monthlyRetainerTotal * 0.35) / 30), 120);
+
+    return Array.from({ length: 30 }, (_, index) => {
+      const waveA = Math.sin(index / 3.3) * 65;
+      const waveB = Math.cos(index / 5.1) * 40;
+      const trend = index * 14;
+      const value = Math.max(10, Math.round(dailyBase + trend + waveA + waveB));
+
+      return {
+        day: index + 1,
+        value,
+      };
+    });
+  }, [collectedThisMonth, monthlyRetainerTotal]);
 
   const nextActions = useMemo(() => {
     return deals
@@ -540,6 +613,356 @@ function App() {
     setLeadForm((current) => ({ ...current, service: name }));
   }
 
+  function handleClientEditorChange(field, value) {
+    setClientEditor((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleSaveClientEdits(event) {
+    event.preventDefault();
+    if (!clientEditor.id) return;
+
+    const retainerValue = Number(clientEditor.retainer);
+    setClients((current) =>
+      current.map((client) =>
+        client.id === clientEditor.id
+          ? {
+              ...client,
+              company: clientEditor.company.trim() || client.company,
+              industry: clientEditor.industry.trim() || client.industry,
+              contactName: clientEditor.contactName.trim() || client.contactName,
+              email: clientEditor.email.trim(),
+              phone: clientEditor.phone.trim(),
+              retainer:
+                Number.isFinite(retainerValue) && retainerValue >= 0
+                  ? retainerValue
+                  : Number(client.retainer || 0),
+            }
+          : client,
+      ),
+    );
+
+    addIntakeLog(
+      'Client',
+      `Client edited: ${clientEditor.company || 'Client'}`,
+      'Updated from manual edit panel',
+    );
+  }
+
+  function openLeadEditor(deal) {
+    if (!deal) return;
+    setLeadEditorState({
+      id: deal.id,
+      company: deal.company || '',
+      contact: deal.contact || '',
+      service: deal.service || '',
+      value: String(deal.value || ''),
+      stage: deal.stage || 'New Lead',
+      expectedClose: deal.expectedClose || '',
+      nextAction: deal.nextAction || '',
+    });
+    setLeadEditorOpen(true);
+  }
+
+  function handleLeadEditorChange(field, value) {
+    setLeadEditorState((current) => ({ ...current, [field]: value }));
+  }
+
+  function handleSaveLeadEdits(event) {
+    event.preventDefault();
+    if (!leadEditorState.id) return;
+
+    const valueNumber = Number(leadEditorState.value);
+    setDeals((current) =>
+      current.map((deal) =>
+        deal.id === leadEditorState.id
+          ? {
+              ...deal,
+              company: leadEditorState.company.trim() || deal.company,
+              contact: leadEditorState.contact.trim() || deal.contact,
+              service: leadEditorState.service.trim() || deal.service,
+              value: Number.isFinite(valueNumber) && valueNumber >= 0 ? valueNumber : deal.value,
+              stage: leadEditorState.stage || deal.stage,
+              expectedClose: leadEditorState.expectedClose || deal.expectedClose,
+              nextAction: leadEditorState.nextAction.trim() || deal.nextAction,
+              probability:
+                stageProbabilityMap[leadEditorState.stage] ?? deal.probability,
+            }
+          : deal,
+      ),
+    );
+
+    addIntakeLog(
+      'Lead',
+      `Lead edited: ${leadEditorState.company || 'Lead'}`,
+      `Stage ${leadEditorState.stage || 'Updated'}`,
+    );
+    setLeadEditorOpen(false);
+    setLeadEditorState(getDefaultLeadEditorState());
+  }
+
+  function upsertClientFromAgent(agentClient, fallbackName = '') {
+    if (!agentClient || typeof agentClient !== 'object') return null;
+
+    const company = (agentClient.name || fallbackName || '').trim();
+    if (!company) return null;
+
+    const normalizedCompany = company.toLowerCase();
+    const normalizedEmail = typeof agentClient.email === 'string' ? agentClient.email.toLowerCase() : '';
+
+    let resolvedClient = null;
+    setClients((current) => {
+      const existingIndex = current.findIndex((client) => {
+        if (agentClient.id && client.id === agentClient.id) return true;
+        const companyMatches = client.company.trim().toLowerCase() === normalizedCompany;
+        if (!companyMatches) return false;
+        if (!normalizedEmail) return true;
+        return (client.email || '').trim().toLowerCase() === normalizedEmail;
+      });
+
+      const mappedClient = {
+        id:
+          agentClient.id ||
+          (existingIndex >= 0 ? current[existingIndex].id : buildId('CL')),
+        company,
+        industry: existingIndex >= 0 ? current[existingIndex].industry : 'Client',
+        city: existingIndex >= 0 ? current[existingIndex].city : 'Local',
+        contactName: existingIndex >= 0 ? current[existingIndex].contactName : 'Primary Contact',
+        email: agentClient.email || (existingIndex >= 0 ? current[existingIndex].email : ''),
+        phone: agentClient.phone || (existingIndex >= 0 ? current[existingIndex].phone : ''),
+        retainer: existingIndex >= 0 ? current[existingIndex].retainer : 0,
+      };
+
+      resolvedClient = mappedClient;
+
+      if (existingIndex >= 0) {
+        const next = [...current];
+        next[existingIndex] = {
+          ...next[existingIndex],
+          ...mappedClient,
+        };
+        return next;
+      }
+
+      return [mappedClient, ...current];
+    });
+
+    return resolvedClient;
+  }
+
+  function applyAgentActions(actions) {
+    if (!Array.isArray(actions) || !actions.length) return;
+
+    actions.forEach((action) => {
+      if (!action || typeof action !== 'object') return;
+      if (action.error) return;
+
+      const toolName = action.tool;
+      const result = action.result;
+
+      if (toolName === 'create_client' && result?.client) {
+        const mappedClient = upsertClientFromAgent(result.client);
+        if (mappedClient) {
+          addIntakeLog('Agent', `Client updated: ${mappedClient.company}`, 'Created or reused client');
+        }
+      }
+
+      if (toolName === 'convert_lead' && result?.client) {
+        const mappedClient = upsertClientFromAgent(result.client, result?.lead?.name || '');
+        const convertedAtRaw = result?.lead?.converted_at;
+        const convertedAt = typeof convertedAtRaw === 'string'
+          ? convertedAtRaw.slice(0, 10)
+          : new Date().toISOString().slice(0, 10);
+        const leadValue = Number(result?.lead?.deal_value || 0);
+
+        if (mappedClient) {
+          setDeals((current) => {
+            const alreadyExists = current.some(
+              (deal) =>
+                deal.companyId === mappedClient.id &&
+                deal.stage === 'Won' &&
+                deal.expectedClose === convertedAt,
+            );
+            if (alreadyExists) return current;
+
+            return [
+              {
+                id: buildId('DL'),
+                companyId: mappedClient.id,
+                company: mappedClient.company,
+                contact: mappedClient.contactName,
+                owner: 'You',
+                service: 'Project Delivery',
+                value: leadValue,
+                stage: 'Won',
+                probability: 100,
+                expectedClose: convertedAt,
+                source: 'Agent Update',
+                lastTouch: convertedAt,
+                nextAction: 'Post-project follow-up',
+              },
+              ...current,
+            ];
+          });
+
+          addIntakeLog(
+            'Agent',
+            `Lead converted: ${mappedClient.company}`,
+            `Marked won${leadValue ? ` · ${formatCurrency(leadValue)}` : ''}`,
+          );
+        }
+      }
+
+      if (toolName === 'add_service') {
+        const servicePayload =
+          result?.service && typeof result.service === 'object' ? result.service : result;
+        const clientPayload = result?.client && typeof result.client === 'object' ? result.client : null;
+
+        if (clientPayload) {
+          upsertClientFromAgent(clientPayload);
+        }
+
+        const serviceCode = typeof servicePayload?.service_code === 'string'
+          ? servicePayload.service_code.trim()
+          : '';
+        const unitPrice = Number(servicePayload?.unit_price || 0);
+        const qty = Number(servicePayload?.qty || 1);
+
+        if (serviceCode) {
+          setServices((current) => {
+            const exists = current.some(
+              (service) => service.name.trim().toLowerCase() === serviceCode.toLowerCase(),
+            );
+            if (exists) return current;
+            return [
+              {
+                id: buildId('SRV'),
+                name: serviceCode,
+                category: 'Agent Added',
+                baseRate: unitPrice,
+              },
+              ...current,
+            ];
+          });
+
+          const summaryTotal = formatCurrency(qty * unitPrice);
+          addIntakeLog('Agent', `Service logged: ${serviceCode}`, `Qty ${qty} · Total ${summaryTotal}`);
+        }
+      }
+    });
+  }
+
+  async function handleAgentSubmit(event) {
+    event.preventDefault();
+    const message = agentInput.trim();
+    if (!message || agentLoading) return;
+
+    const userMessage = {
+      id: buildId('CHAT'),
+      role: 'user',
+      text: message,
+      actions: [],
+    };
+    setAgentMessages((current) => [...current, userMessage]);
+    setAgentInput('');
+    setAgentError('');
+    setAgentLoading(true);
+
+    try {
+      const response = await fetch('/api/agent', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          message,
+          userId: userIdFallback,
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'CRM agent request failed.');
+      }
+
+      const actions = Array.isArray(data.actions) ? data.actions : [];
+      setAgentMessages((current) => [
+        ...current,
+        {
+          id: buildId('CHAT'),
+          role: 'assistant',
+          text: typeof data.reply === 'string' && data.reply.trim() ? data.reply : 'Done.',
+          actions,
+        },
+      ]);
+
+      applyAgentActions(actions);
+    } catch (error) {
+      const messageText =
+        error instanceof Error ? error.message : 'CRM agent request failed.';
+      setAgentError(messageText);
+      setAgentMessages((current) => [
+        ...current,
+        {
+          id: buildId('CHAT'),
+          role: 'assistant',
+          text: 'I could not process that update right now.',
+          actions: [],
+        },
+      ]);
+    } finally {
+      setAgentLoading(false);
+    }
+  }
+
+  async function handleGenerateAiSnapshot() {
+    if (aiLoading) return;
+
+    setAiLoading(true);
+    setAiError('');
+
+    try {
+      const response = await fetch('/api/ai/snapshot', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          metrics: {
+            openLeads: openLeadCount,
+            activeClients: activeClientCount,
+            pipelineValue: formatCurrency(totalPipelineValue),
+            weightedForecast: formatCurrency(weightedForecast),
+            collectedThisMonth: formatCurrency(collectedThisMonth),
+            overdueAmount: formatCurrency(overdueInvoiceAmount),
+          },
+          topLeads: openDeals.slice(0, 6).map((deal) => ({
+            company: deal.company,
+            stage: deal.stage,
+            value: formatCurrency(deal.value),
+            expectedClose: deal.expectedClose,
+          })),
+          topClients: clientSummaries.slice(0, 6).map((client) => ({
+            company: client.company,
+            retainer: formatCurrency(Number(client.retainer || 0)),
+            activeLeadCount: client.activeDealCount,
+          })),
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Unable to generate AI snapshot right now.');
+      }
+
+      setAiSummary(data.text || 'No summary returned.');
+      setAiModel(data.model || 'gpt-5-nano');
+    } catch (error) {
+      setAiError(error.message || 'Unable to generate AI snapshot right now.');
+    } finally {
+      setAiLoading(false);
+    }
+  }
+
   function handleDealDragStart(event, dealId) {
     event.dataTransfer.effectAllowed = 'move';
     event.dataTransfer.setData('text/plain', dealId);
@@ -624,6 +1047,19 @@ function App() {
                 onClientCreate={handleClientCreate}
                 onServiceCreate={handleServiceCreate}
                 intakeLog={intakeLog}
+                aiSummary={aiSummary}
+                aiModel={aiModel}
+                aiLoading={aiLoading}
+                aiError={aiError}
+                onGenerateAiSnapshot={handleGenerateAiSnapshot}
+                agentMessages={agentMessages}
+                agentInput={agentInput}
+                agentLoading={agentLoading}
+                agentError={agentError}
+                onAgentInputChange={setAgentInput}
+                onAgentSubmit={handleAgentSubmit}
+                revenue30d={revenue30d}
+                onLeadSelect={openLeadEditor}
               />
             ) : null}
 
@@ -633,6 +1069,7 @@ function App() {
                 stages={pipelineStages}
                 onDealDragStart={handleDealDragStart}
                 onDealDrop={handleDealDrop}
+                onLeadSelect={openLeadEditor}
               />
             ) : null}
 
@@ -644,16 +1081,19 @@ function App() {
                 selectedClientTasks={selectedClientTasks}
                 selectedClientInvoices={selectedClientInvoices}
                 onSelectClient={setSelectedClientId}
+                clientEditor={clientEditor}
+                onClientEditorChange={handleClientEditorChange}
+                onSaveClientEdits={handleSaveClientEdits}
               />
             ) : null}
 
             {activeView === 'revenue' ? (
               <RevenueView
-                monthlyRevenue={monthlyRevenueSeed}
                 invoices={invoicesSeed}
                 monthlyRetainerTotal={monthlyRetainerTotal}
                 collectedThisMonth={collectedThisMonth}
                 weightedForecast={weightedForecast}
+                revenue30d={revenue30d}
               />
             ) : null}
 
@@ -665,6 +1105,17 @@ function App() {
           </motion.section>
         </AnimatePresence>
       </main>
+
+      <LeadEditModal
+        isOpen={leadEditorOpen}
+        lead={leadEditorState}
+        onChange={handleLeadEditorChange}
+        onClose={() => {
+          setLeadEditorOpen(false);
+          setLeadEditorState(getDefaultLeadEditorState());
+        }}
+        onSave={handleSaveLeadEdits}
+      />
     </div>
   );
 }
@@ -907,6 +1358,19 @@ function DashboardView({
   onClientCreate,
   onServiceCreate,
   intakeLog,
+  aiSummary,
+  aiModel,
+  aiLoading,
+  aiError,
+  onGenerateAiSnapshot,
+  agentMessages,
+  agentInput,
+  agentLoading,
+  agentError,
+  onAgentInputChange,
+  onAgentSubmit,
+  revenue30d,
+  onLeadSelect,
 }) {
   const openLeads = deals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost');
   const averageLeadValue = openLeads.length
@@ -976,7 +1440,7 @@ function DashboardView({
               </thead>
               <tbody>
                 {closingSoon.map((deal) => (
-                  <tr key={deal.id}>
+                  <tr key={deal.id} className="clickable-row" onClick={() => onLeadSelect(deal)}>
                     <td>{deal.company}</td>
                     <td>
                       <span className="status-pill is-neutral">{deal.stage}</span>
@@ -1010,6 +1474,14 @@ function DashboardView({
               </div>
             ))}
           </div>
+        </GlassCard>
+
+        <GlassCard className="panel revenue-line-panel">
+          <div className="panel-head">
+            <h3>Revenue Trend</h3>
+            <span>Last 30 days</span>
+          </div>
+          <RevenueLineChart points={revenue30d} />
         </GlassCard>
 
         <GlassCard className="panel quick-capture-panel">
@@ -1316,12 +1788,90 @@ function DashboardView({
             )}
           </div>
         </GlassCard>
+
+        <GlassCard className="panel ai-snapshot-panel">
+          <div className="panel-head">
+            <h3>AI Snapshot</h3>
+            <span>{aiModel}</span>
+          </div>
+          <div className="ai-snapshot-content">
+            {aiSummary ? <p>{aiSummary}</p> : <p>Generate a concise GPT-5 nano ops summary for today.</p>}
+          </div>
+          {aiError ? <p className="ai-error">{aiError}</p> : null}
+          <button className="capture-submit ai-snapshot-btn" onClick={onGenerateAiSnapshot} disabled={aiLoading}>
+            {aiLoading ? (
+              <>
+                <Loader2 size={14} className="spin-icon" />
+                Generating
+              </>
+            ) : (
+              <>
+                <Sparkles size={14} />
+                Generate Snapshot
+              </>
+            )}
+          </button>
+        </GlassCard>
+
+        <GlassCard className="panel agent-chat-panel">
+          <div className="panel-head">
+            <h3>CRM Agent Chat</h3>
+            <span>Type updates and let the assistant apply changes</span>
+          </div>
+
+          <div className="agent-chat-log">
+            {agentMessages.map((message) => (
+              <div
+                key={message.id}
+                className={`chat-bubble ${message.role === 'user' ? 'user' : 'assistant'}`}
+              >
+                <p>{message.text}</p>
+                {Array.isArray(message.actions) && message.actions.length ? (
+                  <div className="chat-action-list">
+                    {message.actions.map((action, index) => (
+                      <span key={`${message.id}-${action.tool}-${index}`} className="status-pill is-dark">
+                        {action.tool}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+          </div>
+
+          {agentError ? <p className="ai-error">{agentError}</p> : null}
+
+          <form className="agent-chat-form" onSubmit={onAgentSubmit}>
+            <label className="search-field chat-input-shell">
+              <MessageSquare size={16} />
+              <input
+                type="text"
+                value={agentInput}
+                onChange={(event) => onAgentInputChange(event.target.value)}
+                placeholder="Example: Mark Northline Dental project complete and add service WEBSITE_DELIVERY qty 1 unit_price 3500"
+              />
+            </label>
+            <button type="submit" className="capture-submit ai-snapshot-btn" disabled={agentLoading}>
+              {agentLoading ? (
+                <>
+                  <Loader2 size={14} className="spin-icon" />
+                  Sending
+                </>
+              ) : (
+                <>
+                  <SendHorizontal size={14} />
+                  Send
+                </>
+              )}
+            </button>
+          </form>
+        </GlassCard>
       </section>
     </div>
   );
 }
 
-function PipelineView({ deals, stages, onDealDragStart, onDealDrop }) {
+function PipelineView({ deals, stages, onDealDragStart, onDealDrop, onLeadSelect }) {
   const [hoveredStage, setHoveredStage] = useState('');
 
   return (
@@ -1366,6 +1916,7 @@ function PipelineView({ deals, stages, onDealDragStart, onDealDrop }) {
                       draggable
                       whileHover={{ y: -3 }}
                       onDragStart={(event) => onDealDragStart(event, deal.id)}
+                      onClick={() => onLeadSelect(deal)}
                     >
                       <div className="deal-head">
                         <h4>{deal.company}</h4>
@@ -1401,6 +1952,9 @@ function ClientsView({
   selectedClientTasks,
   selectedClientInvoices,
   onSelectClient,
+  clientEditor,
+  onClientEditorChange,
+  onSaveClientEdits,
 }) {
   if (!selectedClient) return null;
 
@@ -1450,20 +2004,65 @@ function ClientsView({
             </span>
           </div>
 
-          <div className="client-contact-row">
-            <div className="mini-stat">
-              <UsersRound size={15} />
-              <span>{selectedClient.contactName}</span>
+          <form className="client-edit-form" onSubmit={onSaveClientEdits}>
+            <div className="capture-grid two">
+              <label>
+                Company
+                <input
+                  type="text"
+                  value={clientEditor.company}
+                  onChange={(event) => onClientEditorChange('company', event.target.value)}
+                />
+              </label>
+              <label>
+                Industry
+                <input
+                  type="text"
+                  value={clientEditor.industry}
+                  onChange={(event) => onClientEditorChange('industry', event.target.value)}
+                />
+              </label>
+              <label>
+                Contact
+                <input
+                  type="text"
+                  value={clientEditor.contactName}
+                  onChange={(event) => onClientEditorChange('contactName', event.target.value)}
+                />
+              </label>
+              <label>
+                Email
+                <input
+                  type="email"
+                  value={clientEditor.email}
+                  onChange={(event) => onClientEditorChange('email', event.target.value)}
+                />
+              </label>
+              <label>
+                Phone
+                <input
+                  type="text"
+                  value={clientEditor.phone}
+                  onChange={(event) => onClientEditorChange('phone', event.target.value)}
+                />
+              </label>
+              <label>
+                Monthly Retainer
+                <input
+                  type="number"
+                  min="0"
+                  value={clientEditor.retainer}
+                  onChange={(event) => onClientEditorChange('retainer', event.target.value)}
+                />
+              </label>
             </div>
-            <div className="mini-stat">
-              <Mail size={15} />
-              <span>{selectedClient.email}</span>
+            <div className="capture-footer">
+              <p>Client details are editable here and update immediately.</p>
+              <button type="submit" className="capture-submit">
+                Save Client
+              </button>
             </div>
-            <div className="mini-stat">
-              <MapPin size={15} />
-              <span>{selectedClient.phone}</span>
-            </div>
-          </div>
+          </form>
 
           <div className="client-detail-grid">
             <section>
@@ -1519,17 +2118,12 @@ function ClientsView({
 }
 
 function RevenueView({
-  monthlyRevenue,
   invoices,
   monthlyRetainerTotal,
   collectedThisMonth,
   weightedForecast,
+  revenue30d,
 }) {
-  const highestMonthlyAmount = Math.max(
-    ...monthlyRevenue.map((item) => Math.max(item.collected, item.forecast)),
-    1,
-  );
-
   const overdueTotal = invoices
     .filter((invoice) => getInvoiceStatus(invoice) === 'Overdue')
     .reduce((sum, invoice) => sum + invoice.amount, 0);
@@ -1582,32 +2176,13 @@ function RevenueView({
       <section className="revenue-layout">
         <GlassCard className="revenue-chart-panel">
           <div className="panel-head">
-            <h3>Collected vs Forecast</h3>
-            <span>Last 6 months</span>
+            <h3>Revenue Over Last 30 Days</h3>
+            <span>Line chart</span>
           </div>
-          <div className="revenue-chart">
-            {monthlyRevenue.map((item) => (
-              <div key={item.month} className="revenue-column">
-                <div className="bar-pair">
-                  <div
-                    className="bar forecast"
-                    style={{ height: `${(item.forecast / highestMonthlyAmount) * 100}%` }}
-                  />
-                  <div
-                    className="bar collected"
-                    style={{ height: `${(item.collected / highestMonthlyAmount) * 100}%` }}
-                  />
-                </div>
-                <p>{item.month}</p>
-              </div>
-            ))}
-          </div>
+          <RevenueLineChart points={revenue30d} />
           <div className="chart-legend">
             <span>
-              <i className="legend-color forecast" /> Forecast
-            </span>
-            <span>
-              <i className="legend-color collected" /> Collected
+              <i className="legend-color collected" /> Revenue
             </span>
           </div>
         </GlassCard>
@@ -1757,6 +2332,170 @@ function SettingsView() {
           </div>
         </GlassCard>
       </section>
+    </div>
+  );
+}
+
+function RevenueLineChart({ points }) {
+  const safePoints = Array.isArray(points) ? points : [];
+  const width = 760;
+  const height = 220;
+  const padding = 22;
+
+  const minValue = safePoints.length
+    ? Math.min(...safePoints.map((point) => point.value))
+    : 0;
+  const maxValue = safePoints.length
+    ? Math.max(...safePoints.map((point) => point.value))
+    : 1;
+  const range = Math.max(maxValue - minValue, 1);
+
+  const coordinates = safePoints.map((point, index) => {
+    const x =
+      padding +
+      (index / Math.max(safePoints.length - 1, 1)) * (width - padding * 2);
+    const y =
+      height -
+      padding -
+      ((point.value - minValue) / range) * (height - padding * 2);
+    return { ...point, x, y };
+  });
+
+  const path = coordinates
+    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x} ${point.y}`)
+    .join(' ');
+
+  const latest = coordinates[coordinates.length - 1];
+
+  return (
+    <div className="line-chart-wrap">
+      <svg viewBox={`0 0 ${width} ${height}`} className="line-chart-svg" role="img" aria-label="Revenue line chart">
+        <defs>
+          <linearGradient id="line-fill-gradient" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor="rgba(255, 252, 242, 0.28)" />
+            <stop offset="100%" stopColor="rgba(255, 252, 242, 0)" />
+          </linearGradient>
+        </defs>
+        <path d={`M ${padding} ${height - padding} L ${width - padding} ${height - padding}`} className="line-grid" />
+        {path ? <path d={path} className="line-path" /> : null}
+        {path ? (
+          <path
+            d={`${path} L ${latest?.x ?? width - padding} ${height - padding} L ${padding} ${height - padding} Z`}
+            className="line-area"
+          />
+        ) : null}
+        {latest ? <circle cx={latest.x} cy={latest.y} r="4" className="line-dot" /> : null}
+      </svg>
+      <div className="line-chart-meta">
+        <span>Day 1</span>
+        <strong>{latest ? `Day ${latest.day} · ${formatCurrency(latest.value)}` : 'No data'}</strong>
+      </div>
+    </div>
+  );
+}
+
+function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
+  if (!isOpen) return null;
+
+  return (
+    <div className="modal-backdrop" role="dialog" aria-modal="true">
+      <motion.div
+        className="lead-edit-modal"
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+      >
+        <div className="modal-header">
+          <h3>Edit Lead</h3>
+          <button className="icon-button" onClick={onClose} aria-label="Close lead editor">
+            <X size={16} />
+          </button>
+        </div>
+
+        <form className="capture-form" onSubmit={onSave}>
+          <div className="capture-grid two">
+            <label>
+              Company
+              <input
+                type="text"
+                value={lead.company}
+                onChange={(event) => onChange('company', event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Contact
+              <input
+                type="text"
+                value={lead.contact}
+                onChange={(event) => onChange('contact', event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Service
+              <input
+                type="text"
+                value={lead.service}
+                onChange={(event) => onChange('service', event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Value
+              <input
+                type="number"
+                min="0"
+                value={lead.value}
+                onChange={(event) => onChange('value', event.target.value)}
+                required
+              />
+            </label>
+            <label>
+              Stage
+              <select
+                value={lead.stage}
+                onChange={(event) => onChange('stage', event.target.value)}
+              >
+                {pipelineStages.map((stage) => (
+                  <option key={stage} value={stage}>
+                    {stage}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              Expected Close
+              <input
+                type="date"
+                value={lead.expectedClose}
+                onChange={(event) => onChange('expectedClose', event.target.value)}
+                required
+              />
+            </label>
+          </div>
+          <label>
+            Next Action
+            <input
+              type="text"
+              value={lead.nextAction}
+              onChange={(event) => onChange('nextAction', event.target.value)}
+            />
+          </label>
+
+          <div className="capture-footer">
+            <p>Tip: You can also drag stage cards in Pipeline view.</p>
+            <div className="modal-actions">
+              <button type="button" className="action-button secondary" onClick={onClose}>
+                Cancel
+              </button>
+              <button type="submit" className="capture-submit">
+                Save Lead
+              </button>
+            </div>
+          </div>
+        </form>
+      </motion.div>
     </div>
   );
 }
