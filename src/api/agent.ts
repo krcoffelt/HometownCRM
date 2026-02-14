@@ -1,8 +1,10 @@
 import { Router } from 'express';
 import { runAgent } from '../ai/agentRunner';
 import { getCRMRepo } from '../crm/repo';
+import { requireAuth } from './auth';
 
 export const agentRouter = Router();
+agentRouter.use(requireAuth);
 
 export function canMutate(_userId: string): boolean {
   // TODO: enforce role-based and tenant-level authorization.
@@ -12,7 +14,7 @@ export function canMutate(_userId: string): boolean {
 agentRouter.post('/agent', async (req, res) => {
   const body = req.body as Partial<{ message: string; userId: string }>;
   const message = body.message;
-  const userId = body.userId;
+  const userId = (res.locals.userId as string | undefined) || body.userId;
 
   if (!message || typeof message !== 'string' || !message.trim()) {
     res.status(400).json({ error: 'message is required and must be a non-empty string.' });

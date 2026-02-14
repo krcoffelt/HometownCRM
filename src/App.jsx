@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ArrowDownRight,
@@ -53,9 +53,8 @@ const stageProbabilityMap = {
 const userIdFallback = 'krcoffelt@gmail.com';
 
 const demoToday = new Date('2026-02-13T09:00:00');
-const AUTH_USERNAME = 'krcoffelt@gmail.com';
-const AUTH_PASSWORD = 'Bvstars_1995';
-const AUTH_SESSION_KEY = 'hometown-crm-authenticated';
+const AUTH_TOKEN_KEY = 'hometown-crm-auth-token';
+const AUTH_USER_ID_KEY = 'hometown-crm-auth-user-id';
 const APP_STORAGE_KEYS = {
   deals: 'hometown-crm-deals-v2',
   clients: 'hometown-crm-clients-v2',
@@ -69,9 +68,18 @@ const CORE_SERVICE_OPTIONS = [
   { id: 'SRV-003', name: 'Domain', category: 'Core', baseRate: 0 },
 ];
 
+function getStoredAuthToken() {
+  if (typeof window === 'undefined') return '';
+  return window.sessionStorage.getItem(AUTH_TOKEN_KEY) || '';
+}
+
+function getStoredAuthUserId() {
+  if (typeof window === 'undefined') return '';
+  return window.sessionStorage.getItem(AUTH_USER_ID_KEY) || '';
+}
+
 function getInitialAuthState() {
-  if (typeof window === 'undefined') return false;
-  return window.sessionStorage.getItem(AUTH_SESSION_KEY) === 'true';
+  return Boolean(getStoredAuthToken());
 }
 
 function loadStoredArray(key, fallback) {
@@ -87,6 +95,36 @@ function loadStoredArray(key, fallback) {
   } catch {
     return fallback;
   }
+}
+
+async function parseJsonResponse(response) {
+  const contentType = response.headers.get('content-type') || '';
+  if (!contentType.toLowerCase().includes('application/json')) {
+    const fallbackBody = (await response.text()).replace(/\s+/g, ' ').trim();
+    const preview = fallbackBody.slice(0, 120);
+    const statusLabel = `Request failed (${response.status})`;
+    const detail = preview ? `: ${preview}` : '.';
+    throw new Error(`${statusLabel} with non-JSON response${detail}`);
+  }
+
+  return response.json();
+}
+
+async function requestJson(url, init = {}) {
+  const response = await fetch(url, init);
+  const data = await parseJsonResponse(response);
+
+  if (!response.ok) {
+    const message =
+      typeof data?.error === 'string' && data.error.trim()
+        ? data.error
+        : `Request failed (${response.status}).`;
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
+
+  return data;
 }
 
 function buildId(prefix) {
@@ -170,6 +208,9 @@ function getInvoiceStatus(invoice) {
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(getInitialAuthState);
+  const [authToken, setAuthToken] = useState(getStoredAuthToken);
+  const [authUserId, setAuthUserId] = useState(getStoredAuthUserId);
+  const [authNotice, setAuthNotice] = useState('');
   const [activeView, setActiveView] = useState('dashboard');
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [searchValue, setSearchValue] = useState('');
@@ -448,23 +489,67 @@ function App() {
     setMobileNavOpen(false);
   }
 
-  function handleLoginAttempt(username, password) {
-    const isValid = username === AUTH_USERNAME && password === AUTH_PASSWORD;
-    if (isValid) {
-      setIsAuthenticated(true);
-      if (typeof window !== 'undefined') {
-        window.sessionStorage.setItem(AUTH_SESSION_KEY, 'true');
+  function persistAuthSession(token, userId) {
+    setAuthToken(token);
+    setAuthUserId(userId);
+    setIsAuthenticated(true);
+    setAuthNotice('');
+
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.setItem(AUTH_TOKEN_KEY, token);
+    window.sessionStorage.setItem(AUTH_USER_ID_KEY, userId);
+  }
+
+  function clearAuthSession(notice = '') {
+    setIsAuthenticated(false);
+    setAuthToken('');
+    setAuthUserId('');
+    setAuthNotice(notice);
+    setMobileNavOpen(false);
+
+    if (typeof window === 'undefined') return;
+    window.sessionStorage.removeItem(AUTH_TOKEN_KEY);
+    window.sessionStorage.removeItem(AUTH_USER_ID_KEY);
+  }
+
+  async function handleLoginAttempt(username, password) {
+    const normalizedUsername = username.trim().toLowerCase();
+
+    try {
+      const data = await requestJson('/api/auth/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: normalizedUsername,
+          password,
+        }),
+      });
+
+      if (!data?.token || typeof data.token !== 'string') {
+        return 'Login succeeded but token was not returned.';
       }
+
+      const userId =
+        typeof data.userId === 'string' && data.userId.trim()
+          ? data.userId.trim()
+          : normalizedUsername;
+
+      persistAuthSession(data.token, userId);
+      return '';
+    } catch (error) {
+      return error instanceof Error ? error.message : 'Unable to sign in right now.';
     }
-    return isValid;
   }
 
   function handleLogout() {
-    setIsAuthenticated(false);
-    setMobileNavOpen(false);
-    if (typeof window !== 'undefined') {
-      window.sessionStorage.removeItem(AUTH_SESSION_KEY);
-    }
+    clearAuthSession();
+  }
+
+  function getAuthorizedHeaders() {
+    if (!authToken) return {};
+    return { Authorization: `Bearer ${authToken}` };
   }
 
   function handleQuickAction(entryType) {
@@ -880,21 +965,17 @@ function App() {
     setAgentLoading(true);
 
     try {
-      const response = await fetch('/api/agent', {
+      const data = await requestJson('/api/agent', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthorizedHeaders(),
         },
         body: JSON.stringify({
           message,
-          userId: userIdFallback,
+          userId: authUserId || userIdFallback,
         }),
       });
-
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'CRM agent request failed.');
-      }
 
       const actions = Array.isArray(data.actions) ? data.actions : [];
       setAgentMessages((current) => [
@@ -909,6 +990,10 @@ function App() {
 
       applyAgentActions(actions);
     } catch (error) {
+      if (error instanceof Error && error.status === 401) {
+        clearAuthSession('Session expired. Please sign in again.');
+        return;
+      }
       const messageText =
         error instanceof Error ? error.message : 'CRM agent request failed.';
       setAgentError(messageText);
@@ -933,10 +1018,11 @@ function App() {
     setAiError('');
 
     try {
-      const response = await fetch('/api/ai/snapshot', {
+      const data = await requestJson('/api/ai/snapshot', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          ...getAuthorizedHeaders(),
         },
         body: JSON.stringify({
           metrics: {
@@ -961,15 +1047,14 @@ function App() {
         }),
       });
 
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.error || 'Unable to generate AI snapshot right now.');
-      }
-
       setAiSummary(data.text || 'No summary returned.');
       setAiModel(data.model || 'gpt-5-nano');
     } catch (error) {
-      setAiError(error.message || 'Unable to generate AI snapshot right now.');
+      if (error instanceof Error && error.status === 401) {
+        clearAuthSession('Session expired. Please sign in again.');
+        return;
+      }
+      setAiError(error instanceof Error ? error.message : 'Unable to generate AI snapshot right now.');
     } finally {
       setAiLoading(false);
     }
@@ -998,7 +1083,7 @@ function App() {
   }
 
   if (!isAuthenticated) {
-    return <LoginView onSubmit={handleLoginAttempt} />;
+    return <LoginView onSubmit={handleLoginAttempt} notice={authNotice} />;
   }
 
   return (
@@ -1114,34 +1199,27 @@ function App() {
   );
 }
 
-function LoginView({ onSubmit }) {
+function LoginView({ onSubmit, notice }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  function handleSubmit(event) {
+  async function handleSubmit(event) {
     event.preventDefault();
-    const isValid = onSubmit(username.trim(), password);
-    if (!isValid) {
-      setErrorMessage('Invalid credentials. Please try again.');
-      return;
-    }
+    if (isSubmitting) return;
+    setIsSubmitting(true);
 
-    setErrorMessage('');
+    const result = await onSubmit(username.trim(), password);
+    setIsSubmitting(false);
+    setErrorMessage(result || '');
   }
 
   return (
     <div className="auth-shell">
       <div className="auth-scene" aria-hidden="true">
         <div className="auth-scene-fallback" />
-        <UnicornScene
-          projectId="impgffSPUoBe2l8bHxyv"
-          sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.0.5/dist/unicornStudio.umd.js"
-          width="100%"
-          height="100%"
-          lazyLoad
-          production
-        />
+        <MemoizedUnicornScene />
         <div className="auth-overlay" />
       </div>
 
@@ -1163,6 +1241,8 @@ function LoginView({ onSubmit }) {
           <label>
             Username
             <input
+              id="auth-username"
+              name="username"
               type="email"
               value={username}
               onChange={(event) => setUsername(event.target.value)}
@@ -1175,6 +1255,8 @@ function LoginView({ onSubmit }) {
           <label>
             Password
             <input
+              id="auth-password"
+              name="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -1184,10 +1266,11 @@ function LoginView({ onSubmit }) {
             />
           </label>
 
+          {notice ? <p className="auth-error">{notice}</p> : null}
           {errorMessage ? <p className="auth-error">{errorMessage}</p> : null}
 
-          <button type="submit" className="auth-submit">
-            Sign in
+          <button type="submit" className="auth-submit" disabled={isSubmitting}>
+            {isSubmitting ? 'Signing in...' : 'Sign in'}
           </button>
         </form>
       </motion.section>
@@ -1195,20 +1278,26 @@ function LoginView({ onSubmit }) {
   );
 }
 
-function AnimatedBackground({ showUnicorn = false }) {
+const MemoizedUnicornScene = memo(function MemoizedUnicornScene() {
+  return (
+    <UnicornScene
+      projectId="impgffSPUoBe2l8bHxyv"
+      sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.0.5/dist/unicornStudio.umd.js"
+      width="100%"
+      height="100%"
+      lazyLoad
+      production
+    />
+  );
+});
+
+const AnimatedBackground = memo(function AnimatedBackground({ showUnicorn = false }) {
   return (
     <div className="background-layer" aria-hidden="true">
       {showUnicorn ? (
         <div className="background-unicorn">
           <div className="background-unicorn-fallback" />
-          <UnicornScene
-            projectId="impgffSPUoBe2l8bHxyv"
-            sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.0.5/dist/unicornStudio.umd.js"
-            width="100%"
-            height="100%"
-            lazyLoad
-            production
-          />
+          <MemoizedUnicornScene />
         </div>
       ) : null}
       <div className="background-unicorn-overlay" />
@@ -1224,7 +1313,7 @@ function AnimatedBackground({ showUnicorn = false }) {
       />
     </div>
   );
-}
+});
 
 function Sidebar({ activeView, onViewChange, mobileNavOpen, onCloseMobileNav }) {
   return (
@@ -1292,6 +1381,7 @@ function TopBar({ onOpenMobileNav, searchValue, onSearchChange, onQuickAction, o
         <label className="search-field">
           <Search size={16} />
           <input
+            name="global-search"
             type="text"
             placeholder="Search lead, client, owner..."
             value={searchValue}
@@ -1538,6 +1628,7 @@ function DashboardView({
                   <label>
                     Company
                     <input
+                      name="lead-company"
                       type="text"
                       value={leadForm.company}
                       onChange={(event) => onLeadFormChange('company', event.target.value)}
@@ -1548,6 +1639,7 @@ function DashboardView({
                   <label>
                     Contact
                     <input
+                      name="lead-contact"
                       type="text"
                       value={leadForm.contact}
                       onChange={(event) => onLeadFormChange('contact', event.target.value)}
@@ -1558,6 +1650,7 @@ function DashboardView({
                   <label>
                     Service
                     <select
+                      name="lead-service"
                       value={leadForm.service}
                       onChange={(event) => onLeadFormChange('service', event.target.value)}
                     >
@@ -1571,6 +1664,7 @@ function DashboardView({
                   <label>
                     Value
                     <input
+                      name="lead-value"
                       type="number"
                       min="0"
                       value={leadForm.value}
@@ -1582,6 +1676,7 @@ function DashboardView({
                   <label>
                     Stage
                     <select
+                      name="lead-stage"
                       value={leadForm.stage}
                       onChange={(event) => onLeadFormChange('stage', event.target.value)}
                     >
@@ -1597,6 +1692,7 @@ function DashboardView({
                   <label>
                     Expected Close
                     <input
+                      name="lead-expected-close"
                       type="date"
                       value={leadForm.expectedClose}
                       onChange={(event) => onLeadFormChange('expectedClose', event.target.value)}
@@ -1616,6 +1712,7 @@ function DashboardView({
                   <label>
                     Company
                     <input
+                      name="client-company"
                       type="text"
                       value={clientForm.company}
                       onChange={(event) => onClientFormChange('company', event.target.value)}
@@ -1626,6 +1723,7 @@ function DashboardView({
                   <label>
                     Contact
                     <input
+                      name="client-contact-name"
                       type="text"
                       value={clientForm.contactName}
                       onChange={(event) => onClientFormChange('contactName', event.target.value)}
@@ -1635,6 +1733,7 @@ function DashboardView({
                   <label>
                     Email
                     <input
+                      name="client-email"
                       type="email"
                       value={clientForm.email}
                       onChange={(event) => onClientFormChange('email', event.target.value)}
@@ -1644,6 +1743,7 @@ function DashboardView({
                   <label>
                     Phone
                     <input
+                      name="client-phone"
                       type="text"
                       value={clientForm.phone}
                       onChange={(event) => onClientFormChange('phone', event.target.value)}
@@ -1752,6 +1852,7 @@ function AgentChatDock({
               <label className="search-field chat-input-shell">
                 <MessageSquare size={16} />
                 <input
+                  name="agent-chat-message"
                   type="text"
                   value={agentInput}
                   onChange={(event) => onAgentInputChange(event.target.value)}
@@ -1916,6 +2017,7 @@ function ClientsView({
               <label>
                 Company
                 <input
+                  name="client-editor-company"
                   type="text"
                   value={clientEditor.company}
                   onChange={(event) => onClientEditorChange('company', event.target.value)}
@@ -1924,6 +2026,7 @@ function ClientsView({
               <label>
                 Industry
                 <input
+                  name="client-editor-industry"
                   type="text"
                   value={clientEditor.industry}
                   onChange={(event) => onClientEditorChange('industry', event.target.value)}
@@ -1932,6 +2035,7 @@ function ClientsView({
               <label>
                 Contact
                 <input
+                  name="client-editor-contact"
                   type="text"
                   value={clientEditor.contactName}
                   onChange={(event) => onClientEditorChange('contactName', event.target.value)}
@@ -1940,6 +2044,7 @@ function ClientsView({
               <label>
                 Email
                 <input
+                  name="client-editor-email"
                   type="email"
                   value={clientEditor.email}
                   onChange={(event) => onClientEditorChange('email', event.target.value)}
@@ -1948,6 +2053,7 @@ function ClientsView({
               <label>
                 Phone
                 <input
+                  name="client-editor-phone"
                   type="text"
                   value={clientEditor.phone}
                   onChange={(event) => onClientEditorChange('phone', event.target.value)}
@@ -1956,6 +2062,7 @@ function ClientsView({
               <label>
                 Monthly Retainer
                 <input
+                  name="client-editor-retainer"
                   type="number"
                   min="0"
                   value={clientEditor.retainer}
@@ -2205,15 +2312,15 @@ function SettingsView() {
           <div className="setting-list">
             <label className="setting-row">
               <span>Deal moved to Negotiation or Won</span>
-              <input type="checkbox" defaultChecked />
+              <input type="checkbox" name="notify-deal-stage" defaultChecked />
             </label>
             <label className="setting-row">
               <span>Invoice due in 3 days</span>
-              <input type="checkbox" defaultChecked />
+              <input type="checkbox" name="notify-invoice-due" defaultChecked />
             </label>
             <label className="setting-row">
               <span>Daily activity digest email</span>
-              <input type="checkbox" />
+              <input type="checkbox" name="notify-daily-digest" />
             </label>
           </div>
         </GlassCard>
@@ -2226,15 +2333,15 @@ function SettingsView() {
           <div className="setting-list">
             <label className="setting-row">
               <span>Auto-assign inbound form leads to Kyle</span>
-              <input type="checkbox" defaultChecked />
+              <input type="checkbox" name="pipeline-auto-assign" defaultChecked />
             </label>
             <label className="setting-row">
               <span>Create task when proposal is sent</span>
-              <input type="checkbox" defaultChecked />
+              <input type="checkbox" name="pipeline-task-on-proposal" defaultChecked />
             </label>
             <label className="setting-row">
               <span>Require loss reason before stage = Lost</span>
-              <input type="checkbox" />
+              <input type="checkbox" name="pipeline-require-loss-reason" />
             </label>
           </div>
         </GlassCard>
@@ -2324,6 +2431,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Company
               <input
+                name="lead-editor-company"
                 type="text"
                 value={lead.company}
                 onChange={(event) => onChange('company', event.target.value)}
@@ -2333,6 +2441,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Contact
               <input
+                name="lead-editor-contact"
                 type="text"
                 value={lead.contact}
                 onChange={(event) => onChange('contact', event.target.value)}
@@ -2342,6 +2451,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Service
               <input
+                name="lead-editor-service"
                 type="text"
                 value={lead.service}
                 onChange={(event) => onChange('service', event.target.value)}
@@ -2351,6 +2461,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Value
               <input
+                name="lead-editor-value"
                 type="number"
                 min="0"
                 value={lead.value}
@@ -2361,6 +2472,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Stage
               <select
+                name="lead-editor-stage"
                 value={lead.stage}
                 onChange={(event) => onChange('stage', event.target.value)}
               >
@@ -2374,6 +2486,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
             <label>
               Expected Close
               <input
+                name="lead-editor-expected-close"
                 type="date"
                 value={lead.expectedClose}
                 onChange={(event) => onChange('expectedClose', event.target.value)}
@@ -2384,6 +2497,7 @@ function LeadEditModal({ isOpen, lead, onChange, onClose, onSave }) {
           <label>
             Next Action
             <input
+              name="lead-editor-next-action"
               type="text"
               value={lead.nextAction}
               onChange={(event) => onChange('nextAction', event.target.value)}

@@ -1,0 +1,23 @@
+[build]
+  publish = "dist"
+  functions = "netlify/functions"
+
+[[redirects]]
+  from = "/api/auth/login"
+  to = "/.netlify/functions/auth-login"
+  status = 200
+
+[[redirects]]
+  from = "/api/health"
+  to = "/.netlify/functions/health"
+  status = 200
+
+[[redirects]]
+  from = "/api/agent"
+  to = "/.netlify/functions/agent"
+  status = 200
+
+[[redirects]]
+  from = "/api/ai/snapshot"
+  to = "/.netlify/functions/ai-snapshot"
+  status = 200

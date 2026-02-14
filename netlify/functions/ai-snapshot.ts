@@ -1,23 +1,27 @@
-import { Router } from 'express';
-import { getOpenAIClient, getOpenAIModel } from '../ai/openaiClient';
-import { requireAuth } from './auth';
+import { getOpenAIClient, getOpenAIModel } from '../../src/ai/openaiClient';
+import { getAuthorizedUserId, json, parseBody } from './shared';
 
-export const snapshotRouter = Router();
+type SnapshotBody = {
+  metrics?: Record<string, unknown>;
+  topLeads?: unknown[];
+  topClients?: unknown[];
+};
 
-snapshotRouter.get('/health', (_req, res) => {
-  res.json({
-    ok: true,
-    model: getOpenAIModel(),
-  });
-});
+export async function handler(event: {
+  httpMethod: string;
+  body: string | null;
+  headers: Record<string, string | undefined>;
+}) {
+  if (event.httpMethod !== 'POST') {
+    return json(405, { error: 'Method not allowed.' });
+  }
 
-snapshotRouter.post('/ai/snapshot', requireAuth, async (req, res) => {
-  const payload = req.body as {
-    metrics?: Record<string, unknown>;
-    topLeads?: unknown[];
-    topClients?: unknown[];
-  };
+  const authorizedUserId = getAuthorizedUserId(event);
+  if (!authorizedUserId) {
+    return json(401, { error: 'Session expired or invalid token.' });
+  }
 
+  const payload = parseBody<SnapshotBody>(event) || {};
   const metrics = payload.metrics || {};
   const topLeads = Array.isArray(payload.topLeads) ? payload.topLeads : [];
   const topClients = Array.isArray(payload.topClients) ? payload.topClients : [];
@@ -51,13 +55,12 @@ ${JSON.stringify(topClients, null, 2)}
       max_output_tokens: 260,
     });
 
-    res.json({
+    return json(200, {
       model,
       text: response.output_text || 'No summary returned.',
     });
   } catch (error) {
-    const errorMessage =
-      error instanceof Error ? error.message : 'OpenAI request failed.';
-    res.status(500).json({ error: errorMessage });
+    const errorMessage = error instanceof Error ? error.message : 'OpenAI request failed.';
+    return json(500, { error: errorMessage });
   }
-});
+}
