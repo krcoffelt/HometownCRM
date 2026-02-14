@@ -57,10 +57,10 @@ const AUTH_USERNAME = 'krcoffelt@gmail.com';
 const AUTH_PASSWORD = 'Bvstars_1995';
 const AUTH_SESSION_KEY = 'hometown-crm-authenticated';
 const APP_STORAGE_KEYS = {
-  deals: 'hometown-crm-deals',
-  clients: 'hometown-crm-clients',
-  services: 'hometown-crm-services',
-  intakeLog: 'hometown-crm-intake-log',
+  deals: 'hometown-crm-deals-v2',
+  clients: 'hometown-crm-clients-v2',
+  services: 'hometown-crm-services-v2',
+  intakeLog: 'hometown-crm-intake-log-v2',
 };
 
 function getInitialAuthState() {
@@ -1372,6 +1372,7 @@ function DashboardView({
   revenue30d,
   onLeadSelect,
 }) {
+  const [expandedPanel, setExpandedPanel] = useState('');
   const openLeads = deals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost');
   const averageLeadValue = openLeads.length
     ? openLeads.reduce((sum, deal) => sum + deal.value, 0) / openLeads.length
@@ -1379,498 +1380,639 @@ function DashboardView({
   const highestStageValue = Math.max(...stageData.map((stage) => stage.value), 1);
   const closingSoon = [...openLeads]
     .sort((a, b) => new Date(a.expectedClose) - new Date(b.expectedClose))
-    .slice(0, 6);
+    .slice(0, 8);
   const clientRankings = [...clients]
     .sort((a, b) => Number(b.retainer || 0) + b.totalValue * 0.03 - (Number(a.retainer || 0) + a.totalValue * 0.03))
-    .slice(0, 6);
+    .slice(0, 7);
   const stageHighlights = stageData.filter((stage) => stage.stage !== 'Lost');
   const coveragePercent = totalPipelineValue
     ? Math.round((weightedForecast / totalPipelineValue) * 100)
     : 0;
+  const nextActionPreview = nextActions.slice(0, 4);
+  const intakePreview = intakeLog.slice(0, 6);
+
+  function togglePanelFocus(panelId) {
+    setExpandedPanel((current) => (current === panelId ? '' : panelId));
+  }
+
+  function panelClassName(panelId, slotClass) {
+    const stateClass = expandedPanel
+      ? expandedPanel === panelId
+        ? 'is-expanded'
+        : 'is-collapsed'
+      : '';
+    return `panel bento-panel ${slotClass} ${stateClass}`.trim();
+  }
 
   return (
-    <div className="dashboard-focus">
-      <div className="view-header">
-        <h1>Small Agency Command Center</h1>
-        <p>Simple visibility across leads, clients, and revenue with quick manual capture.</p>
+    <div className="dashboard-focus bento-dashboard">
+      <div className="view-header bento-header">
+        <div>
+          <h1>Agency Command Grid</h1>
+          <p>One-screen visibility for leads, clients, projects, and growth. Click Focus to expand any tile.</p>
+        </div>
+        <div className="dashboard-header-meta">
+          <span className="status-pill is-dark">{openLeadCount} open leads</span>
+          <span className="status-pill is-dark">{activeClientCount} active clients</span>
+          <span className="status-pill is-dark">{formatCurrency(collectedThisMonth)} collected</span>
+        </div>
       </div>
 
-      <section className="agency-metric-grid">
-        <GlassCard className="metric-card agency-metric">
+      <section className="bento-metric-strip">
+        <GlassCard className="metric-card agency-metric compact-metric">
           <p className="metric-label">Open Leads</p>
           <h2>{openLeadCount}</h2>
           <p className="metric-delta up">{formatCurrency(totalPipelineValue)} pipeline value</p>
         </GlassCard>
 
-        <GlassCard className="metric-card agency-metric">
+        <GlassCard className="metric-card agency-metric compact-metric">
           <p className="metric-label">Active Clients</p>
           <h2>{activeClientCount}</h2>
           <p className="metric-delta up">{formatCurrency(monthlyRetainerTotal)} monthly retainers</p>
         </GlassCard>
 
-        <GlassCard className="metric-card agency-metric">
+        <GlassCard className="metric-card agency-metric compact-metric">
           <p className="metric-label">Revenue Snapshot</p>
           <h2>{formatCurrency(collectedThisMonth + wonThisMonth)}</h2>
           <p className="metric-delta up">{formatCurrency(weightedForecast)} weighted forecast</p>
         </GlassCard>
 
-        <GlassCard className="metric-card agency-metric">
+        <GlassCard className="metric-card agency-metric compact-metric">
           <p className="metric-label">Collections Risk</p>
           <h2>{formatCurrency(overdueInvoiceAmount)}</h2>
           <p className="metric-delta down">{overdueInvoiceCount} overdue invoices</p>
         </GlassCard>
       </section>
 
-      <section className="agency-dashboard-grid">
-        <GlassCard className="panel lead-radar-panel">
-          <div className="panel-head">
-            <h3>Lead Radar</h3>
-            <span>{openLeads.length} active leads</span>
+      <section className={`agency-bento-grid ${expandedPanel ? 'is-expanded' : ''}`}>
+        <GlassCard className={panelClassName('revenue', 'bento-panel-revenue')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Revenue Trend</h3>
+              <span>Last 30 days</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'revenue' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('revenue')}
+            >
+              {expandedPanel === 'revenue' ? 'Close Focus' : 'Focus'}
+            </button>
           </div>
-          <div className="table-scroll">
-            <table>
-              <thead>
-                <tr>
-                  <th>Company</th>
-                  <th>Stage</th>
-                  <th>Service</th>
-                  <th>Close</th>
-                  <th>Value</th>
-                </tr>
-              </thead>
-              <tbody>
-                {closingSoon.map((deal) => (
-                  <tr key={deal.id} className="clickable-row" onClick={() => onLeadSelect(deal)}>
-                    <td>{deal.company}</td>
-                    <td>
-                      <span className="status-pill is-neutral">{deal.stage}</span>
-                    </td>
-                    <td>{deal.service}</td>
-                    <td>{deal.expectedClose}</td>
-                    <td>{formatCurrency(deal.value)}</td>
+          <div className="panel-scroll-body">
+            <RevenueLineChart points={revenue30d} />
+            <div className="revenue-clarity-grid compact-clarity-grid">
+              <div className="clarity-tile">
+                <p>Avg Lead Value</p>
+                <strong>{formatCurrency(averageLeadValue)}</strong>
+              </div>
+              <div className="clarity-tile">
+                <p>Monthly Retainers</p>
+                <strong>{formatCurrency(monthlyRetainerTotal)}</strong>
+              </div>
+              <div className="clarity-tile">
+                <p>Won This Month</p>
+                <strong>{formatCurrency(wonThisMonth)}</strong>
+              </div>
+              <div className="clarity-tile">
+                <p>Win Rate</p>
+                <strong>{winRate.toFixed(1)}%</strong>
+              </div>
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className={panelClassName('leads', 'bento-panel-leads')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Lead Radar</h3>
+              <span>{openLeads.length} active leads</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'leads' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('leads')}
+            >
+              {expandedPanel === 'leads' ? 'Close Focus' : 'Focus'}
+            </button>
+          </div>
+          <div className="panel-scroll-body">
+            <div className="table-scroll lead-radar-mini">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Company</th>
+                    <th>Stage</th>
+                    <th>Close</th>
+                    <th>Value</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="stage-strip-list">
-            {stageHighlights.map((stage) => (
-              <div key={stage.stage} className="stage-strip-row">
-                <div>
-                  <strong>{stage.stage}</strong>
-                  <span>
-                    {stage.count} · {formatCompactCurrency(stage.value)}
-                  </span>
-                </div>
-                <div className="stage-strip-track">
-                  <motion.span
-                    initial={{ width: 0 }}
-                    animate={{
-                      width: `${Math.max((stage.value / highestStageValue) * 100, 3)}%`,
-                    }}
-                    transition={{ duration: 0.35 }}
-                  />
-                </div>
-              </div>
-            ))}
+                </thead>
+                <tbody>
+                  {closingSoon.map((deal) => (
+                    <tr key={deal.id} className="clickable-row" onClick={() => onLeadSelect(deal)}>
+                      <td>{deal.company}</td>
+                      <td>
+                        <span className="status-pill is-neutral">{deal.stage}</span>
+                      </td>
+                      <td>{deal.expectedClose}</td>
+                      <td>{formatCurrency(deal.value)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </GlassCard>
 
-        <GlassCard className="panel revenue-line-panel">
-          <div className="panel-head">
-            <h3>Revenue Trend</h3>
-            <span>Last 30 days</span>
-          </div>
-          <RevenueLineChart points={revenue30d} />
-        </GlassCard>
-
-        <GlassCard className="panel quick-capture-panel">
-          <div className="panel-head">
-            <h3>Quick Capture Hub</h3>
-            <span>Manual entry for leads, clients, services</span>
-          </div>
-          <div className="capture-tabs">
+        <GlassCard className={panelClassName('pipeline', 'bento-panel-pipeline')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Pipeline Momentum</h3>
+              <span>{coveragePercent}% weighted coverage</span>
+            </div>
             <button
-              className={quickEntryType === 'lead' ? 'active' : ''}
-              onClick={() => onQuickEntryTypeChange('lead')}
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'pipeline' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('pipeline')}
             >
-              Lead
-            </button>
-            <button
-              className={quickEntryType === 'client' ? 'active' : ''}
-              onClick={() => onQuickEntryTypeChange('client')}
-            >
-              Client
-            </button>
-            <button
-              className={quickEntryType === 'service' ? 'active' : ''}
-              onClick={() => onQuickEntryTypeChange('service')}
-            >
-              Service
+              {expandedPanel === 'pipeline' ? 'Close Focus' : 'Focus'}
             </button>
           </div>
-
-          {quickEntryType === 'lead' ? (
-            <form className="capture-form" onSubmit={onLeadCreate}>
-              <div className="capture-grid two">
-                <label>
-                  Company
-                  <input
-                    type="text"
-                    value={leadForm.company}
-                    onChange={(event) => onLeadFormChange('company', event.target.value)}
-                    placeholder="Acme Co."
-                    required
-                  />
-                </label>
-                <label>
-                  Contact
-                  <input
-                    type="text"
-                    value={leadForm.contact}
-                    onChange={(event) => onLeadFormChange('contact', event.target.value)}
-                    placeholder="Name"
-                    required
-                  />
-                </label>
-                <label>
-                  Service
-                  <input
-                    type="text"
-                    list="service-options"
-                    value={leadForm.service}
-                    onChange={(event) => onLeadFormChange('service', event.target.value)}
-                    placeholder="Select or type service"
-                    required
-                  />
-                  <datalist id="service-options">
-                    {services.map((service) => (
-                      <option key={service.id} value={service.name} />
-                    ))}
-                  </datalist>
-                </label>
-                <label>
-                  Lead Value
-                  <input
-                    type="number"
-                    min="0"
-                    value={leadForm.value}
-                    onChange={(event) => onLeadFormChange('value', event.target.value)}
-                    placeholder="4500"
-                    required
-                  />
-                </label>
-                <label>
-                  Stage
-                  <select
-                    value={leadForm.stage}
-                    onChange={(event) => onLeadFormChange('stage', event.target.value)}
-                  >
-                    {pipelineStages
-                      .filter((stage) => stage !== 'Won' && stage !== 'Lost')
-                      .map((stage) => (
-                        <option key={stage} value={stage}>
-                          {stage}
-                        </option>
-                      ))}
-                  </select>
-                </label>
-                <label>
-                  Expected Close
-                  <input
-                    type="date"
-                    value={leadForm.expectedClose}
-                    onChange={(event) => onLeadFormChange('expectedClose', event.target.value)}
-                    required
-                  />
-                </label>
-              </div>
-              <div className="capture-footer">
-                <p>New companies are auto-created as prospect clients.</p>
-                <button type="submit" className="capture-submit">
-                  Add Lead
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {quickEntryType === 'client' ? (
-            <form className="capture-form" onSubmit={onClientCreate}>
-              <div className="capture-grid two">
-                <label>
-                  Company
-                  <input
-                    type="text"
-                    value={clientForm.company}
-                    onChange={(event) => onClientFormChange('company', event.target.value)}
-                    placeholder="Client company"
-                    required
-                  />
-                </label>
-                <label>
-                  Industry
-                  <input
-                    type="text"
-                    value={clientForm.industry}
-                    onChange={(event) => onClientFormChange('industry', event.target.value)}
-                    placeholder="Healthcare, Legal, Home Services..."
-                  />
-                </label>
-                <label>
-                  Contact
-                  <input
-                    type="text"
-                    value={clientForm.contactName}
-                    onChange={(event) => onClientFormChange('contactName', event.target.value)}
-                    placeholder="Primary contact"
-                  />
-                </label>
-                <label>
-                  Email
-                  <input
-                    type="email"
-                    value={clientForm.email}
-                    onChange={(event) => onClientFormChange('email', event.target.value)}
-                    placeholder="client@company.com"
-                  />
-                </label>
-                <label>
-                  Phone
-                  <input
-                    type="text"
-                    value={clientForm.phone}
-                    onChange={(event) => onClientFormChange('phone', event.target.value)}
-                    placeholder="(000) 000-0000"
-                  />
-                </label>
-                <label>
-                  Monthly Retainer
-                  <input
-                    type="number"
-                    min="0"
-                    value={clientForm.retainer}
-                    onChange={(event) => onClientFormChange('retainer', event.target.value)}
-                    placeholder="3000"
-                  />
-                </label>
-              </div>
-              <div className="capture-footer">
-                <p>Clients appear instantly in the client workspace and revenue cards.</p>
-                <button type="submit" className="capture-submit">
-                  Add Client
-                </button>
-              </div>
-            </form>
-          ) : null}
-
-          {quickEntryType === 'service' ? (
-            <form className="capture-form" onSubmit={onServiceCreate}>
-              <div className="capture-grid two">
-                <label>
-                  Service Name
-                  <input
-                    type="text"
-                    value={serviceForm.name}
-                    onChange={(event) => onServiceFormChange('name', event.target.value)}
-                    placeholder="Meta Ad Management"
-                    required
-                  />
-                </label>
-                <label>
-                  Category
-                  <input
-                    type="text"
-                    value={serviceForm.category}
-                    onChange={(event) => onServiceFormChange('category', event.target.value)}
-                    placeholder="Growth Marketing"
-                  />
-                </label>
-                <label>
-                  Base Monthly Rate
-                  <input
-                    type="number"
-                    min="0"
-                    value={serviceForm.baseRate}
-                    onChange={(event) => onServiceFormChange('baseRate', event.target.value)}
-                    placeholder="2400"
-                  />
-                </label>
-              </div>
-              <div className="capture-footer">
-                <p>Services can be selected directly in the lead entry workflow.</p>
-                <button type="submit" className="capture-submit">
-                  Add Service
-                </button>
-              </div>
-            </form>
-          ) : null}
-        </GlassCard>
-
-        <GlassCard className="panel client-priority-panel">
-          <div className="panel-head">
-            <h3>Client Priority</h3>
-            <span>{clients.length} total clients</span>
-          </div>
-          <div className="client-priority-list">
-            {clientRankings.map((client) => (
-              <div key={client.id} className="client-priority-row">
-                <div>
-                  <h4>{client.company}</h4>
-                  <p>{client.activeDealCount} active leads</p>
-                </div>
-                <div className="client-priority-meta">
-                  <strong>{formatCurrency(Number(client.retainer || 0))}</strong>
-                  <span>{formatCompactCurrency(client.totalValue)} pipeline</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
-        <GlassCard className="panel revenue-clarity-panel">
-          <div className="panel-head">
-            <h3>Revenue Clarity</h3>
-            <span>{coveragePercent}% forecast coverage</span>
-          </div>
-          <div className="revenue-clarity-grid">
-            <div className="clarity-tile">
-              <p>Avg Lead Value</p>
-              <strong>{formatCurrency(averageLeadValue)}</strong>
-            </div>
-            <div className="clarity-tile">
-              <p>Monthly Retainers</p>
-              <strong>{formatCurrency(monthlyRetainerTotal)}</strong>
-            </div>
-            <div className="clarity-tile">
-              <p>Won This Month</p>
-              <strong>{formatCurrency(wonThisMonth)}</strong>
-            </div>
-            <div className="clarity-tile">
-              <p>Win Rate</p>
-              <strong>{winRate.toFixed(1)}%</strong>
-            </div>
-          </div>
-          <div className="next-actions">
-            {nextActions.map((deal) => (
-              <div key={deal.id} className="action-row">
-                <div>
-                  <h4>{deal.company}</h4>
-                  <p>{deal.nextAction}</p>
-                </div>
-                <div className="action-meta">
-                  <span>{deal.expectedClose}</span>
-                  <strong>{formatCompactCurrency(deal.value)}</strong>
-                </div>
-              </div>
-            ))}
-          </div>
-        </GlassCard>
-
-        <GlassCard className="panel intake-log-panel">
-          <div className="panel-head">
-            <h3>Recent Manual Inputs</h3>
-            <span>{intakeLog.length} recent entries</span>
-          </div>
-          <div className="intake-log-list">
-            {intakeLog.length ? (
-              intakeLog.map((entry) => (
-                <div key={entry.id} className="intake-log-row">
-                  <span className="status-pill is-dark">{entry.type}</span>
+          <div className="panel-scroll-body">
+            <div className="stage-strip-list">
+              {stageHighlights.map((stage) => (
+                <div key={stage.stage} className="stage-strip-row">
                   <div>
-                    <h4>{entry.title}</h4>
-                    <p>{entry.detail}</p>
-                    <small>{entry.createdAt}</small>
+                    <strong>{stage.stage}</strong>
+                    <span>
+                      {stage.count} · {formatCompactCurrency(stage.value)}
+                    </span>
+                  </div>
+                  <div className="stage-strip-track">
+                    <motion.span
+                      initial={{ width: 0 }}
+                      animate={{
+                        width: `${Math.max((stage.value / highestStageValue) * 100, 3)}%`,
+                      }}
+                      transition={{ duration: 0.35 }}
+                    />
                   </div>
                 </div>
-              ))
-            ) : (
-              <p className="empty-note">No manual entries yet. Use Quick Capture Hub to add your first lead.</p>
-            )}
-          </div>
-        </GlassCard>
+              ))}
+            </div>
 
-        <GlassCard className="panel ai-snapshot-panel">
-          <div className="panel-head">
-            <h3>AI Snapshot</h3>
-            <span>{aiModel}</span>
-          </div>
-          <div className="ai-snapshot-content">
-            {aiSummary ? <p>{aiSummary}</p> : <p>Generate a concise GPT-5 nano ops summary for today.</p>}
-          </div>
-          {aiError ? <p className="ai-error">{aiError}</p> : null}
-          <button className="capture-submit ai-snapshot-btn" onClick={onGenerateAiSnapshot} disabled={aiLoading}>
-            {aiLoading ? (
-              <>
-                <Loader2 size={14} className="spin-icon" />
-                Generating
-              </>
-            ) : (
-              <>
-                <Sparkles size={14} />
-                Generate Snapshot
-              </>
-            )}
-          </button>
-        </GlassCard>
-
-        <GlassCard className="panel agent-chat-panel">
-          <div className="panel-head">
-            <h3>CRM Agent Chat</h3>
-            <span>Type updates and let the assistant apply changes</span>
-          </div>
-
-          <div className="agent-chat-log">
-            {agentMessages.map((message) => (
-              <div
-                key={message.id}
-                className={`chat-bubble ${message.role === 'user' ? 'user' : 'assistant'}`}
-              >
-                <p>{message.text}</p>
-                {Array.isArray(message.actions) && message.actions.length ? (
-                  <div className="chat-action-list">
-                    {message.actions.map((action, index) => (
-                      <span key={`${message.id}-${action.tool}-${index}`} className="status-pill is-dark">
-                        {action.tool}
-                      </span>
-                    ))}
+            <div className="next-actions compact-actions">
+              {nextActionPreview.map((deal) => (
+                <div key={deal.id} className="action-row">
+                  <div>
+                    <h4>{deal.company}</h4>
+                    <p>{deal.nextAction}</p>
                   </div>
-                ) : null}
-              </div>
-            ))}
+                  <div className="action-meta">
+                    <span>{deal.expectedClose}</span>
+                    <strong>{formatCompactCurrency(deal.value)}</strong>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className={panelClassName('capture', 'bento-panel-capture')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Quick Capture Hub</h3>
+              <span>Manual entry for leads, clients, and services</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'capture' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('capture')}
+            >
+              {expandedPanel === 'capture' ? 'Close Focus' : 'Focus'}
+            </button>
           </div>
 
-          {agentError ? <p className="ai-error">{agentError}</p> : null}
+          <div className="panel-scroll-body">
+            <div className="capture-tabs">
+              <button
+                type="button"
+                className={quickEntryType === 'lead' ? 'active' : ''}
+                onClick={() => onQuickEntryTypeChange('lead')}
+              >
+                Lead
+              </button>
+              <button
+                type="button"
+                className={quickEntryType === 'client' ? 'active' : ''}
+                onClick={() => onQuickEntryTypeChange('client')}
+              >
+                Client
+              </button>
+              <button
+                type="button"
+                className={quickEntryType === 'service' ? 'active' : ''}
+                onClick={() => onQuickEntryTypeChange('service')}
+              >
+                Service
+              </button>
+            </div>
 
-          <form className="agent-chat-form" onSubmit={onAgentSubmit}>
-            <label className="search-field chat-input-shell">
-              <MessageSquare size={16} />
-              <input
-                type="text"
-                value={agentInput}
-                onChange={(event) => onAgentInputChange(event.target.value)}
-                placeholder="Example: Mark Northline Dental project complete and add service WEBSITE_DELIVERY qty 1 unit_price 3500"
-              />
-            </label>
-            <button type="submit" className="capture-submit ai-snapshot-btn" disabled={agentLoading}>
-              {agentLoading ? (
+            {quickEntryType === 'lead' ? (
+              <form className="capture-form" onSubmit={onLeadCreate}>
+                <div className="capture-grid two">
+                  <label>
+                    Company
+                    <input
+                      type="text"
+                      value={leadForm.company}
+                      onChange={(event) => onLeadFormChange('company', event.target.value)}
+                      placeholder="Acme Co."
+                      required
+                    />
+                  </label>
+                  <label>
+                    Contact
+                    <input
+                      type="text"
+                      value={leadForm.contact}
+                      onChange={(event) => onLeadFormChange('contact', event.target.value)}
+                      placeholder="Name"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Service
+                    <input
+                      type="text"
+                      list="service-options"
+                      value={leadForm.service}
+                      onChange={(event) => onLeadFormChange('service', event.target.value)}
+                      placeholder="Select or type service"
+                      required
+                    />
+                    <datalist id="service-options">
+                      {services.map((service) => (
+                        <option key={service.id} value={service.name} />
+                      ))}
+                    </datalist>
+                  </label>
+                  <label>
+                    Lead Value
+                    <input
+                      type="number"
+                      min="0"
+                      value={leadForm.value}
+                      onChange={(event) => onLeadFormChange('value', event.target.value)}
+                      placeholder="4500"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Stage
+                    <select
+                      value={leadForm.stage}
+                      onChange={(event) => onLeadFormChange('stage', event.target.value)}
+                    >
+                      {pipelineStages
+                        .filter((stage) => stage !== 'Won' && stage !== 'Lost')
+                        .map((stage) => (
+                          <option key={stage} value={stage}>
+                            {stage}
+                          </option>
+                        ))}
+                    </select>
+                  </label>
+                  <label>
+                    Expected Close
+                    <input
+                      type="date"
+                      value={leadForm.expectedClose}
+                      onChange={(event) => onLeadFormChange('expectedClose', event.target.value)}
+                      required
+                    />
+                  </label>
+                </div>
+                <div className="capture-footer">
+                  <p>New companies are auto-created as prospect clients.</p>
+                  <button type="submit" className="capture-submit">
+                    Add Lead
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {quickEntryType === 'client' ? (
+              <form className="capture-form" onSubmit={onClientCreate}>
+                <div className="capture-grid two">
+                  <label>
+                    Company
+                    <input
+                      type="text"
+                      value={clientForm.company}
+                      onChange={(event) => onClientFormChange('company', event.target.value)}
+                      placeholder="Client company"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Industry
+                    <input
+                      type="text"
+                      value={clientForm.industry}
+                      onChange={(event) => onClientFormChange('industry', event.target.value)}
+                      placeholder="Healthcare, Legal, Home Services..."
+                    />
+                  </label>
+                  <label>
+                    Contact
+                    <input
+                      type="text"
+                      value={clientForm.contactName}
+                      onChange={(event) => onClientFormChange('contactName', event.target.value)}
+                      placeholder="Primary contact"
+                    />
+                  </label>
+                  <label>
+                    Email
+                    <input
+                      type="email"
+                      value={clientForm.email}
+                      onChange={(event) => onClientFormChange('email', event.target.value)}
+                      placeholder="client@company.com"
+                    />
+                  </label>
+                  <label>
+                    Phone
+                    <input
+                      type="text"
+                      value={clientForm.phone}
+                      onChange={(event) => onClientFormChange('phone', event.target.value)}
+                      placeholder="(000) 000-0000"
+                    />
+                  </label>
+                  <label>
+                    Monthly Retainer
+                    <input
+                      type="number"
+                      min="0"
+                      value={clientForm.retainer}
+                      onChange={(event) => onClientFormChange('retainer', event.target.value)}
+                      placeholder="3000"
+                    />
+                  </label>
+                </div>
+                <div className="capture-footer">
+                  <p>Clients appear instantly in the client workspace and revenue cards.</p>
+                  <button type="submit" className="capture-submit">
+                    Add Client
+                  </button>
+                </div>
+              </form>
+            ) : null}
+
+            {quickEntryType === 'service' ? (
+              <form className="capture-form" onSubmit={onServiceCreate}>
+                <div className="capture-grid two">
+                  <label>
+                    Service Name
+                    <input
+                      type="text"
+                      value={serviceForm.name}
+                      onChange={(event) => onServiceFormChange('name', event.target.value)}
+                      placeholder="Meta Ad Management"
+                      required
+                    />
+                  </label>
+                  <label>
+                    Category
+                    <input
+                      type="text"
+                      value={serviceForm.category}
+                      onChange={(event) => onServiceFormChange('category', event.target.value)}
+                      placeholder="Growth Marketing"
+                    />
+                  </label>
+                  <label>
+                    Base Monthly Rate
+                    <input
+                      type="number"
+                      min="0"
+                      value={serviceForm.baseRate}
+                      onChange={(event) => onServiceFormChange('baseRate', event.target.value)}
+                      placeholder="2400"
+                    />
+                  </label>
+                </div>
+                <div className="capture-footer">
+                  <p>Services can be selected directly in the lead entry workflow.</p>
+                  <button type="submit" className="capture-submit">
+                    Add Service
+                  </button>
+                </div>
+              </form>
+            ) : null}
+          </div>
+        </GlassCard>
+
+        <GlassCard className={panelClassName('clients', 'bento-panel-clients')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Client Priority</h3>
+              <span>{clients.length} total clients</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'clients' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('clients')}
+            >
+              {expandedPanel === 'clients' ? 'Close Focus' : 'Focus'}
+            </button>
+          </div>
+          <div className="panel-scroll-body">
+            <div className="client-priority-list tight">
+              {clientRankings.map((client) => (
+                <div key={client.id} className="client-priority-row">
+                  <div>
+                    <h4>{client.company}</h4>
+                    <p>{client.activeDealCount} active leads</p>
+                  </div>
+                  <div className="client-priority-meta">
+                    <strong>{formatCurrency(Number(client.retainer || 0))}</strong>
+                    <span>{formatCompactCurrency(client.totalValue)} pipeline</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className={panelClassName('intake', 'bento-panel-intake')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>Recent Inputs</h3>
+              <span>{intakeLog.length} entries</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'intake' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('intake')}
+            >
+              {expandedPanel === 'intake' ? 'Close Focus' : 'Focus'}
+            </button>
+          </div>
+          <div className="panel-scroll-body">
+            <div className="intake-log-list tight">
+              {intakePreview.length ? (
+                intakePreview.map((entry) => (
+                  <div key={entry.id} className="intake-log-row">
+                    <span className="status-pill is-dark">{entry.type}</span>
+                    <div>
+                      <h4>{entry.title}</h4>
+                      <p>{entry.detail}</p>
+                      <small>{entry.createdAt}</small>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <p className="empty-note">No manual entries yet. Use Quick Capture Hub to add your first lead.</p>
+              )}
+            </div>
+          </div>
+        </GlassCard>
+
+        <GlassCard className={panelClassName('ai', 'bento-panel-ai')}>
+          <div className="panel-head bento-head">
+            <div>
+              <h3>AI Snapshot</h3>
+              <span>{aiModel}</span>
+            </div>
+            <button
+              type="button"
+              className={`panel-expand-btn ${expandedPanel === 'ai' ? 'active' : ''}`}
+              onClick={() => togglePanelFocus('ai')}
+            >
+              {expandedPanel === 'ai' ? 'Close Focus' : 'Focus'}
+            </button>
+          </div>
+          <div className="panel-scroll-body">
+            <div className="ai-snapshot-content">
+              {aiSummary ? <p>{aiSummary}</p> : <p>Generate a concise GPT-5 nano ops summary for today.</p>}
+            </div>
+            {aiError ? <p className="ai-error">{aiError}</p> : null}
+            <button className="capture-submit ai-snapshot-btn" onClick={onGenerateAiSnapshot} disabled={aiLoading}>
+              {aiLoading ? (
                 <>
                   <Loader2 size={14} className="spin-icon" />
-                  Sending
+                  Generating
                 </>
               ) : (
                 <>
-                  <SendHorizontal size={14} />
-                  Send
+                  <Sparkles size={14} />
+                  Generate Snapshot
                 </>
               )}
             </button>
-          </form>
+          </div>
         </GlassCard>
       </section>
+
+      <AgentChatDock
+        agentMessages={agentMessages}
+        agentInput={agentInput}
+        agentLoading={agentLoading}
+        agentError={agentError}
+        onAgentInputChange={onAgentInputChange}
+        onAgentSubmit={onAgentSubmit}
+      />
     </div>
   );
 }
 
+function AgentChatDock({
+  agentMessages,
+  agentInput,
+  agentLoading,
+  agentError,
+  onAgentInputChange,
+  onAgentSubmit,
+}) {
+  const [isOpen, setIsOpen] = useState(true);
+  const visibleMessages = agentMessages.slice(-8);
+
+  return (
+    <aside className={`agent-chat-dock ${isOpen ? 'open' : 'closed'}`}>
+      <button type="button" className="agent-chat-toggle" onClick={() => setIsOpen((current) => !current)}>
+        <MessageSquare size={15} />
+        <span>{isOpen ? 'Hide Chat' : 'Open Chat'}</span>
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isOpen ? (
+          <motion.div
+            className="agent-chat-card"
+            initial={{ opacity: 0, y: 10, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 10, scale: 0.98 }}
+            transition={{ duration: 0.2 }}
+          >
+            <div className="panel-head">
+              <h3>CRM Agent Chat</h3>
+              <span>{agentLoading ? 'Working...' : 'Live'}</span>
+            </div>
+
+            <div className="agent-chat-log dock-log">
+              {visibleMessages.map((message) => (
+                <div
+                  key={message.id}
+                  className={`chat-bubble ${message.role === 'user' ? 'user' : 'assistant'}`}
+                >
+                  <p>{message.text}</p>
+                  {Array.isArray(message.actions) && message.actions.length ? (
+                    <div className="chat-action-list">
+                      {message.actions.map((action, index) => (
+                        <span key={`${message.id}-${action.tool}-${index}`} className="status-pill is-dark">
+                          {action.tool}
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+
+            {agentError ? <p className="ai-error">{agentError}</p> : null}
+
+            <form className="agent-chat-form" onSubmit={onAgentSubmit}>
+              <label className="search-field chat-input-shell">
+                <MessageSquare size={16} />
+                <input
+                  type="text"
+                  value={agentInput}
+                  onChange={(event) => onAgentInputChange(event.target.value)}
+                  placeholder="Example: move Northline Dental to Won and add website delivery service"
+                />
+              </label>
+              <button type="submit" className="capture-submit ai-snapshot-btn" disabled={agentLoading}>
+                {agentLoading ? (
+                  <>
+                    <Loader2 size={14} className="spin-icon" />
+                    Sending
+                  </>
+                ) : (
+                  <>
+                    <SendHorizontal size={14} />
+                    Send
+                  </>
+                )}
+              </button>
+            </form>
+          </motion.div>
+        ) : null}
+      </AnimatePresence>
+    </aside>
+  );
+}
 function PipelineView({ deals, stages, onDealDragStart, onDealDrop, onLeadSelect }) {
   const [hoveredStage, setHoveredStage] = useState('');
 
