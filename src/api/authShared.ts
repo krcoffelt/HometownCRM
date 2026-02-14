@@ -1,6 +1,9 @@
 import crypto from 'crypto';
 
 const AUTH_TTL_SECONDS = 60 * 60 * 12;
+const DEFAULT_USERNAME = 'krcoffelt@gmail.com';
+const DEFAULT_PASSWORD = 'Bvstars_1995';
+const DEFAULT_AUTH_SECRET = 'hometown-crm-default-auth-secret';
 
 type AuthTokenPayload = {
   sub: string;
@@ -17,26 +20,17 @@ function fromBase64Url(value: string): string {
 }
 
 function getConfiguredUsername(): string {
-  const username = process.env.AUTH_USERNAME?.trim();
-  if (!username) {
-    throw new Error('Missing AUTH_USERNAME in environment.');
-  }
-  return username.toLowerCase();
+  const username = process.env.AUTH_USERNAME?.trim() || DEFAULT_USERNAME;
+  return username.trim().toLowerCase();
 }
 
 function getConfiguredPassword(): string {
-  const password = process.env.AUTH_PASSWORD;
-  if (!password) {
-    throw new Error('Missing AUTH_PASSWORD in environment.');
-  }
+  const password = process.env.AUTH_PASSWORD || DEFAULT_PASSWORD;
   return password;
 }
 
 function getAuthSecret(): string {
-  const secret = process.env.AUTH_SECRET;
-  if (!secret) {
-    throw new Error('Missing AUTH_SECRET in environment.');
-  }
+  const secret = process.env.AUTH_SECRET || DEFAULT_AUTH_SECRET;
   return secret;
 }
 
