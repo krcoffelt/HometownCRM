@@ -59,9 +59,15 @@ const AUTH_SESSION_KEY = 'hometown-crm-authenticated';
 const APP_STORAGE_KEYS = {
   deals: 'hometown-crm-deals-v2',
   clients: 'hometown-crm-clients-v2',
-  services: 'hometown-crm-services-v2',
+  services: 'hometown-crm-services-v3',
   intakeLog: 'hometown-crm-intake-log-v2',
 };
+
+const CORE_SERVICE_OPTIONS = [
+  { id: 'SRV-001', name: 'Website', category: 'Core', baseRate: 0 },
+  { id: 'SRV-002', name: 'Google Business Profile', category: 'Core', baseRate: 0 },
+  { id: 'SRV-003', name: 'Domain', category: 'Core', baseRate: 0 },
+];
 
 function getInitialAuthState() {
   if (typeof window === 'undefined') return false;
@@ -172,7 +178,7 @@ function App() {
   );
   const [deals, setDeals] = useState(() => loadStoredArray(APP_STORAGE_KEYS.deals, dealsSeed));
   const [services, setServices] = useState(() =>
-    loadStoredArray(APP_STORAGE_KEYS.services, getDefaultServicesFromDeals(dealsSeed)),
+    loadStoredArray(APP_STORAGE_KEYS.services, CORE_SERVICE_OPTIONS),
   );
   const [intakeLog, setIntakeLog] = useState(() =>
     loadStoredArray(APP_STORAGE_KEYS.intakeLog, []),
@@ -180,7 +186,7 @@ function App() {
   const [selectedClientId, setSelectedClientId] = useState('');
   const [quickEntryType, setQuickEntryType] = useState('lead');
   const [leadForm, setLeadForm] = useState(() =>
-    getInitialLeadForm(loadStoredArray(APP_STORAGE_KEYS.services, getDefaultServicesFromDeals(dealsSeed))),
+    getInitialLeadForm(loadStoredArray(APP_STORAGE_KEYS.services, CORE_SERVICE_OPTIONS)),
   );
   const [clientForm, setClientForm] = useState({
     company: '',
@@ -255,10 +261,11 @@ function App() {
   }, [clients, selectedClientId]);
 
   useEffect(() => {
-    if (services.length && !leadForm.service) {
-      setLeadForm((current) => ({ ...current, service: services[0].name }));
+    const coreNames = CORE_SERVICE_OPTIONS.map((service) => service.name);
+    if (!leadForm.service || !coreNames.includes(leadForm.service)) {
+      setLeadForm((current) => ({ ...current, service: CORE_SERVICE_OPTIONS[0].name }));
     }
-  }, [services, leadForm.service]);
+  }, [leadForm.service]);
 
   const filteredDeals = useMemo(() => {
     if (!searchValue.trim()) return deals;
@@ -402,20 +409,24 @@ function App() {
   }, [clients]);
 
   const revenue30d = useMemo(() => {
-    const dailyBase = Math.max(Math.round((collectedThisMonth + monthlyRetainerTotal * 0.35) / 30), 120);
+    const wonDeals = deals.filter((deal) => deal.stage === 'Won');
+    const today = new Date(demoToday);
+    today.setHours(0, 0, 0, 0);
 
     return Array.from({ length: 30 }, (_, index) => {
-      const waveA = Math.sin(index / 3.3) * 65;
-      const waveB = Math.cos(index / 5.1) * 40;
-      const trend = index * 14;
-      const value = Math.max(10, Math.round(dailyBase + trend + waveA + waveB));
+      const dayDate = new Date(today);
+      dayDate.setDate(today.getDate() - (29 - index));
+      const dayKey = dayDate.toISOString().slice(0, 10);
+      const dailyValue = wonDeals
+        .filter((deal) => (deal.expectedClose || '').slice(0, 10) === dayKey)
+        .reduce((sum, deal) => sum + Number(deal.value || 0), 0);
 
       return {
         day: index + 1,
-        value,
+        value: dailyValue,
       };
     });
-  }, [collectedThisMonth, monthlyRetainerTotal]);
+  }, [deals]);
 
   const nextActions = useMemo(() => {
     return deals
@@ -458,7 +469,11 @@ function App() {
 
   function handleQuickAction(entryType) {
     setActiveView('dashboard');
-    setQuickEntryType(entryType);
+    if (entryType === 'client') {
+      setQuickEntryType('client');
+      return;
+    }
+    setQuickEntryType('lead');
   }
 
   function addIntakeLog(type, title, detail) {
@@ -542,7 +557,7 @@ function App() {
 
     setDeals((current) => [createdLead, ...current]);
     addIntakeLog('Lead', `${company} lead added`, `${stage} · ${formatCurrency(value)}`);
-    setLeadForm(getInitialLeadForm(services));
+    setLeadForm(getInitialLeadForm(CORE_SERVICE_OPTIONS));
   }
 
   function handleClientCreate(event) {
@@ -551,9 +566,6 @@ function App() {
     if (!company) return;
 
     const contactName = clientForm.contactName.trim() || 'Primary Contact';
-    const parsedRetainer = Number(clientForm.retainer);
-    const retainer = Number.isFinite(parsedRetainer) && parsedRetainer > 0 ? parsedRetainer : 0;
-
     const createdClient = {
       id: buildId('CL'),
       company,
@@ -562,14 +574,14 @@ function App() {
       contactName,
       email: clientForm.email.trim(),
       phone: clientForm.phone.trim(),
-      retainer,
+      retainer: 0,
     };
 
     setClients((current) => [createdClient, ...current]);
     addIntakeLog(
       'Client',
       `${company} client added`,
-      `Retainer ${formatCurrency(retainer)} / month`,
+      `${contactName} added as primary contact`,
     );
     setClientForm({
       company: '',
@@ -991,7 +1003,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <AnimatedBackground />
+      <AnimatedBackground showUnicorn={activeView === 'dashboard'} />
 
       <Sidebar
         activeView={activeView}
@@ -1022,36 +1034,18 @@ function App() {
               <DashboardView
                 deals={deals}
                 clients={clientSummaries}
-                services={services}
-                stageData={stageData}
+                coreServices={CORE_SERVICE_OPTIONS}
                 nextActions={nextActions}
-                collectedThisMonth={collectedThisMonth}
-                weightedForecast={weightedForecast}
-                totalPipelineValue={totalPipelineValue}
-                monthlyRetainerTotal={monthlyRetainerTotal}
-                overdueInvoiceAmount={overdueInvoiceAmount}
-                overdueInvoiceCount={overdueInvoiceCount}
                 openLeadCount={openLeadCount}
                 activeClientCount={activeClientCount}
-                wonThisMonth={wonThisMonth}
-                winRate={winRate}
                 quickEntryType={quickEntryType}
                 onQuickEntryTypeChange={setQuickEntryType}
                 leadForm={leadForm}
                 clientForm={clientForm}
-                serviceForm={serviceForm}
                 onLeadFormChange={handleLeadFormChange}
                 onClientFormChange={handleClientFormChange}
-                onServiceFormChange={handleServiceFormChange}
                 onLeadCreate={handleLeadCreate}
                 onClientCreate={handleClientCreate}
-                onServiceCreate={handleServiceCreate}
-                intakeLog={intakeLog}
-                aiSummary={aiSummary}
-                aiModel={aiModel}
-                aiLoading={aiLoading}
-                aiError={aiError}
-                onGenerateAiSnapshot={handleGenerateAiSnapshot}
                 agentMessages={agentMessages}
                 agentInput={agentInput}
                 agentLoading={agentLoading}
@@ -1201,9 +1195,23 @@ function LoginView({ onSubmit }) {
   );
 }
 
-function AnimatedBackground() {
+function AnimatedBackground({ showUnicorn = false }) {
   return (
     <div className="background-layer" aria-hidden="true">
+      {showUnicorn ? (
+        <div className="background-unicorn">
+          <div className="background-unicorn-fallback" />
+          <UnicornScene
+            projectId="impgffSPUoBe2l8bHxyv"
+            sdkUrl="https://cdn.jsdelivr.net/gh/hiunicornstudio/unicornstudio.js@v2.0.5/dist/unicornStudio.umd.js"
+            width="100%"
+            height="100%"
+            lazyLoad
+            production
+          />
+        </div>
+      ) : null}
+      <div className="background-unicorn-overlay" />
       <motion.div
         className="gradient-orb orb-one"
         animate={{ x: [0, 45, -25, 0], y: [0, -30, 25, 0] }}
@@ -1301,10 +1309,6 @@ function TopBar({ onOpenMobileNav, searchValue, onSearchChange, onQuickAction, o
           <Plus size={16} />
           <span>New Client</span>
         </button>
-        <button className="action-button primary" onClick={() => onQuickAction('service')}>
-          <Plus size={16} />
-          <span>New Service</span>
-        </button>
         <button className="icon-button">
           <Bell size={17} />
         </button>
@@ -1333,36 +1337,18 @@ function GlassCard({ className = '', children, delay = 0 }) {
 function DashboardView({
   deals,
   clients,
-  services,
-  stageData,
+  coreServices,
   nextActions,
-  collectedThisMonth,
-  weightedForecast,
-  totalPipelineValue,
-  monthlyRetainerTotal,
-  overdueInvoiceAmount,
-  overdueInvoiceCount,
   openLeadCount,
   activeClientCount,
-  wonThisMonth,
-  winRate,
   quickEntryType,
   onQuickEntryTypeChange,
   leadForm,
   clientForm,
-  serviceForm,
   onLeadFormChange,
   onClientFormChange,
-  onServiceFormChange,
   onLeadCreate,
   onClientCreate,
-  onServiceCreate,
-  intakeLog,
-  aiSummary,
-  aiModel,
-  aiLoading,
-  aiError,
-  onGenerateAiSnapshot,
   agentMessages,
   agentInput,
   agentLoading,
@@ -1372,145 +1358,125 @@ function DashboardView({
   revenue30d,
   onLeadSelect,
 }) {
-  const [expandedPanel, setExpandedPanel] = useState('');
   const openLeads = deals.filter((deal) => deal.stage !== 'Won' && deal.stage !== 'Lost');
-  const averageLeadValue = openLeads.length
-    ? openLeads.reduce((sum, deal) => sum + deal.value, 0) / openLeads.length
-    : 0;
-  const highestStageValue = Math.max(...stageData.map((stage) => stage.value), 1);
-  const closingSoon = [...openLeads]
+  const wonDeals = deals.filter((deal) => deal.stage === 'Won');
+  const openLeadValue = openLeads.reduce((sum, deal) => sum + Number(deal.value || 0), 0);
+  const revenue30Total = revenue30d.reduce((sum, point) => sum + Number(point.value || 0), 0);
+  const quickMode = quickEntryType === 'client' ? 'client' : 'lead';
+
+  const serviceBreakdown = coreServices.map((service) => {
+    const serviceDeals = deals.filter((deal) =>
+      (deal.service || '').toLowerCase().includes(service.name.toLowerCase()),
+    );
+    const completedCount = serviceDeals.filter((deal) => deal.stage === 'Won').length;
+    const totalValue = serviceDeals.reduce((sum, deal) => sum + Number(deal.value || 0), 0);
+
+    return {
+      name: service.name,
+      totalCount: serviceDeals.length,
+      completedCount,
+      totalValue,
+    };
+  });
+
+  const serviceMaxValue = Math.max(...serviceBreakdown.map((item) => item.totalValue), 1);
+
+  const leadQueue = [...openLeads]
     .sort((a, b) => new Date(a.expectedClose) - new Date(b.expectedClose))
-    .slice(0, 8);
+    .slice(0, 10);
+
   const clientRankings = [...clients]
-    .sort((a, b) => Number(b.retainer || 0) + b.totalValue * 0.03 - (Number(a.retainer || 0) + a.totalValue * 0.03))
-    .slice(0, 7);
-  const stageHighlights = stageData.filter((stage) => stage.stage !== 'Lost');
-  const coveragePercent = totalPipelineValue
-    ? Math.round((weightedForecast / totalPipelineValue) * 100)
-    : 0;
-  const nextActionPreview = nextActions.slice(0, 4);
-  const intakePreview = intakeLog.slice(0, 6);
+    .sort((a, b) => b.activeDealCount - a.activeDealCount || b.totalValue - a.totalValue)
+    .slice(0, 8);
 
-  function togglePanelFocus(panelId) {
-    setExpandedPanel((current) => (current === panelId ? '' : panelId));
-  }
-
-  function panelClassName(panelId, slotClass) {
-    const stateClass = expandedPanel
-      ? expandedPanel === panelId
-        ? 'is-expanded'
-        : 'is-collapsed'
-      : '';
-    return `panel bento-panel ${slotClass} ${stateClass}`.trim();
-  }
+  const actionPreview = nextActions.slice(0, 5);
 
   return (
-    <div className="dashboard-focus bento-dashboard">
-      <div className="view-header bento-header">
+    <div className="dashboard-focus classic-dashboard">
+      <div className="view-header classic-header">
         <div>
-          <h1>Agency Command Grid</h1>
-          <p>One-screen visibility for leads, clients, projects, and growth. Click Focus to expand any tile.</p>
+          <h1>Dashboard</h1>
+          <p>Lead + client command center for Websites, Google Business Profiles, and Domains.</p>
         </div>
-        <div className="dashboard-header-meta">
-          <span className="status-pill is-dark">{openLeadCount} open leads</span>
-          <span className="status-pill is-dark">{activeClientCount} active clients</span>
-          <span className="status-pill is-dark">{formatCurrency(collectedThisMonth)} collected</span>
+        <div className="classic-profile-chip">
+          <div className="profile-avatar">KC</div>
+          <div>
+            <strong>Kyle Coffelt</strong>
+            <span>Owner</span>
+          </div>
         </div>
       </div>
 
-      <section className="bento-metric-strip">
-        <GlassCard className="metric-card agency-metric compact-metric">
-          <p className="metric-label">Open Leads</p>
-          <h2>{openLeadCount}</h2>
-          <p className="metric-delta up">{formatCurrency(totalPipelineValue)} pipeline value</p>
-        </GlassCard>
-
-        <GlassCard className="metric-card agency-metric compact-metric">
-          <p className="metric-label">Active Clients</p>
-          <h2>{activeClientCount}</h2>
-          <p className="metric-delta up">{formatCurrency(monthlyRetainerTotal)} monthly retainers</p>
-        </GlassCard>
-
-        <GlassCard className="metric-card agency-metric compact-metric">
-          <p className="metric-label">Revenue Snapshot</p>
-          <h2>{formatCurrency(collectedThisMonth + wonThisMonth)}</h2>
-          <p className="metric-delta up">{formatCurrency(weightedForecast)} weighted forecast</p>
-        </GlassCard>
-
-        <GlassCard className="metric-card agency-metric compact-metric">
-          <p className="metric-label">Collections Risk</p>
-          <h2>{formatCurrency(overdueInvoiceAmount)}</h2>
-          <p className="metric-delta down">{overdueInvoiceCount} overdue invoices</p>
-        </GlassCard>
-      </section>
-
-      <section className={`agency-bento-grid ${expandedPanel ? 'is-expanded' : ''}`}>
-        <GlassCard className={panelClassName('revenue', 'bento-panel-revenue')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Revenue Trend</h3>
-              <span>Last 30 days</span>
+      <section className="classic-dashboard-grid">
+        <div className="classic-main-column">
+          <GlassCard className="panel classic-metric-strip">
+            <div className="classic-metric-chip">
+              <p>Open Leads</p>
+              <h3>{openLeadCount}</h3>
             </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'revenue' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('revenue')}
-            >
-              {expandedPanel === 'revenue' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
-            <RevenueLineChart points={revenue30d} />
-            <div className="revenue-clarity-grid compact-clarity-grid">
-              <div className="clarity-tile">
-                <p>Avg Lead Value</p>
-                <strong>{formatCurrency(averageLeadValue)}</strong>
+            <div className="classic-metric-chip">
+              <p>Active Clients</p>
+              <h3>{activeClientCount}</h3>
+            </div>
+            <div className="classic-metric-chip">
+              <p>Completed</p>
+              <h3>{wonDeals.length}</h3>
+            </div>
+            <div className="classic-metric-chip">
+              <p>Revenue 30d</p>
+              <h3>{formatCurrency(revenue30Total)}</h3>
+            </div>
+          </GlassCard>
+
+          <GlassCard className="panel classic-revenue-panel">
+            <div className="panel-head">
+              <h3>Revenue (Last 30 Days)</h3>
+              <span>{formatCurrency(openLeadValue)} open value</span>
+            </div>
+            <div className="classic-revenue-inner">
+              <div className="classic-chart-wrap">
+                <RevenueLineChart points={revenue30d} />
               </div>
-              <div className="clarity-tile">
-                <p>Monthly Retainers</p>
-                <strong>{formatCurrency(monthlyRetainerTotal)}</strong>
-              </div>
-              <div className="clarity-tile">
-                <p>Won This Month</p>
-                <strong>{formatCurrency(wonThisMonth)}</strong>
-              </div>
-              <div className="clarity-tile">
-                <p>Win Rate</p>
-                <strong>{winRate.toFixed(1)}%</strong>
+              <div className="classic-service-stack">
+                {serviceBreakdown.map((item) => (
+                  <div key={item.name} className="classic-service-row">
+                    <div>
+                      <h4>{item.name}</h4>
+                      <p>
+                        {item.totalCount} projects · {item.completedCount} completed
+                      </p>
+                    </div>
+                    <strong>{formatCurrency(item.totalValue)}</strong>
+                    <div className="classic-service-track">
+                      <span style={{ width: `${Math.max((item.totalValue / serviceMaxValue) * 100, 8)}%` }} />
+                    </div>
+                  </div>
+                ))}
               </div>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
 
-        <GlassCard className={panelClassName('leads', 'bento-panel-leads')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Lead Radar</h3>
-              <span>{openLeads.length} active leads</span>
+          <GlassCard className="panel classic-leads-panel">
+            <div className="panel-head">
+              <h3>Lead Queue</h3>
+              <span>Click a row to edit details</span>
             </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'leads' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('leads')}
-            >
-              {expandedPanel === 'leads' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
-            <div className="table-scroll lead-radar-mini">
+            <div className="table-scroll">
               <table>
                 <thead>
                   <tr>
                     <th>Company</th>
+                    <th>Service</th>
                     <th>Stage</th>
                     <th>Close</th>
                     <th>Value</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {closingSoon.map((deal) => (
+                  {leadQueue.map((deal) => (
                     <tr key={deal.id} className="clickable-row" onClick={() => onLeadSelect(deal)}>
                       <td>{deal.company}</td>
+                      <td>{deal.service}</td>
                       <td>
                         <span className="status-pill is-neutral">{deal.stage}</span>
                       </td>
@@ -1521,113 +1487,61 @@ function DashboardView({
                 </tbody>
               </table>
             </div>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
 
-        <GlassCard className={panelClassName('pipeline', 'bento-panel-pipeline')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Pipeline Momentum</h3>
-              <span>{coveragePercent}% weighted coverage</span>
+        <div className="classic-side-column">
+          <GlassCard className="panel upcoming-dark-card">
+            <div className="panel-head">
+              <h3>Upcoming Work</h3>
+              <span>Priority actions</span>
             </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'pipeline' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('pipeline')}
-            >
-              {expandedPanel === 'pipeline' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
-            <div className="stage-strip-list">
-              {stageHighlights.map((stage) => (
-                <div key={stage.stage} className="stage-strip-row">
-                  <div>
-                    <strong>{stage.stage}</strong>
-                    <span>
-                      {stage.count} · {formatCompactCurrency(stage.value)}
-                    </span>
-                  </div>
-                  <div className="stage-strip-track">
-                    <motion.span
-                      initial={{ width: 0 }}
-                      animate={{
-                        width: `${Math.max((stage.value / highestStageValue) * 100, 3)}%`,
-                      }}
-                      transition={{ duration: 0.35 }}
-                    />
-                  </div>
+            <div className="upcoming-list">
+              {actionPreview.map((deal) => (
+                <div key={deal.id} className="upcoming-row">
+                  <h4>{deal.company}</h4>
+                  <p>{deal.nextAction}</p>
+                  <small>
+                    {deal.expectedClose} · {formatCurrency(deal.value)}
+                  </small>
                 </div>
               ))}
             </div>
+          </GlassCard>
 
-            <div className="next-actions compact-actions">
-              {nextActionPreview.map((deal) => (
-                <div key={deal.id} className="action-row">
-                  <div>
-                    <h4>{deal.company}</h4>
-                    <p>{deal.nextAction}</p>
-                  </div>
-                  <div className="action-meta">
-                    <span>{deal.expectedClose}</span>
-                    <strong>{formatCompactCurrency(deal.value)}</strong>
-                  </div>
-                </div>
-              ))}
+          <GlassCard className="panel classic-quick-panel">
+            <div className="panel-head">
+              <h3>Quick Add</h3>
+              <span>Lead or client</span>
             </div>
-          </div>
-        </GlassCard>
 
-        <GlassCard className={panelClassName('capture', 'bento-panel-capture')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Quick Capture Hub</h3>
-              <span>Manual entry for leads, clients, and services</span>
-            </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'capture' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('capture')}
-            >
-              {expandedPanel === 'capture' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-
-          <div className="panel-scroll-body">
-            <div className="capture-tabs">
+            <div className="capture-tabs two-tabs">
               <button
                 type="button"
-                className={quickEntryType === 'lead' ? 'active' : ''}
+                className={quickMode === 'lead' ? 'active' : ''}
                 onClick={() => onQuickEntryTypeChange('lead')}
               >
                 Lead
               </button>
               <button
                 type="button"
-                className={quickEntryType === 'client' ? 'active' : ''}
+                className={quickMode === 'client' ? 'active' : ''}
                 onClick={() => onQuickEntryTypeChange('client')}
               >
                 Client
               </button>
-              <button
-                type="button"
-                className={quickEntryType === 'service' ? 'active' : ''}
-                onClick={() => onQuickEntryTypeChange('service')}
-              >
-                Service
-              </button>
             </div>
 
-            {quickEntryType === 'lead' ? (
+            {quickMode === 'lead' ? (
               <form className="capture-form" onSubmit={onLeadCreate}>
-                <div className="capture-grid two">
+                <div className="capture-grid one">
                   <label>
                     Company
                     <input
                       type="text"
                       value={leadForm.company}
                       onChange={(event) => onLeadFormChange('company', event.target.value)}
-                      placeholder="Acme Co."
+                      placeholder="Client company"
                       required
                     />
                   </label>
@@ -1637,34 +1551,31 @@ function DashboardView({
                       type="text"
                       value={leadForm.contact}
                       onChange={(event) => onLeadFormChange('contact', event.target.value)}
-                      placeholder="Name"
+                      placeholder="Primary contact"
                       required
                     />
                   </label>
                   <label>
                     Service
-                    <input
-                      type="text"
-                      list="service-options"
+                    <select
                       value={leadForm.service}
                       onChange={(event) => onLeadFormChange('service', event.target.value)}
-                      placeholder="Select or type service"
-                      required
-                    />
-                    <datalist id="service-options">
-                      {services.map((service) => (
-                        <option key={service.id} value={service.name} />
+                    >
+                      {coreServices.map((service) => (
+                        <option key={service.id} value={service.name}>
+                          {service.name}
+                        </option>
                       ))}
-                    </datalist>
+                    </select>
                   </label>
                   <label>
-                    Lead Value
+                    Value
                     <input
                       type="number"
                       min="0"
                       value={leadForm.value}
                       onChange={(event) => onLeadFormChange('value', event.target.value)}
-                      placeholder="4500"
+                      placeholder="900"
                       required
                     />
                   </label>
@@ -1694,17 +1605,14 @@ function DashboardView({
                   </label>
                 </div>
                 <div className="capture-footer">
-                  <p>New companies are auto-created as prospect clients.</p>
                   <button type="submit" className="capture-submit">
                     Add Lead
                   </button>
                 </div>
               </form>
-            ) : null}
-
-            {quickEntryType === 'client' ? (
+            ) : (
               <form className="capture-form" onSubmit={onClientCreate}>
-                <div className="capture-grid two">
+                <div className="capture-grid one">
                   <label>
                     Company
                     <input
@@ -1713,15 +1621,6 @@ function DashboardView({
                       onChange={(event) => onClientFormChange('company', event.target.value)}
                       placeholder="Client company"
                       required
-                    />
-                  </label>
-                  <label>
-                    Industry
-                    <input
-                      type="text"
-                      value={clientForm.industry}
-                      onChange={(event) => onClientFormChange('industry', event.target.value)}
-                      placeholder="Healthcare, Legal, Home Services..."
                     />
                   </label>
                   <label>
@@ -1751,85 +1650,21 @@ function DashboardView({
                       placeholder="(000) 000-0000"
                     />
                   </label>
-                  <label>
-                    Monthly Retainer
-                    <input
-                      type="number"
-                      min="0"
-                      value={clientForm.retainer}
-                      onChange={(event) => onClientFormChange('retainer', event.target.value)}
-                      placeholder="3000"
-                    />
-                  </label>
                 </div>
                 <div className="capture-footer">
-                  <p>Clients appear instantly in the client workspace and revenue cards.</p>
                   <button type="submit" className="capture-submit">
                     Add Client
                   </button>
                 </div>
               </form>
-            ) : null}
+            )}
+          </GlassCard>
 
-            {quickEntryType === 'service' ? (
-              <form className="capture-form" onSubmit={onServiceCreate}>
-                <div className="capture-grid two">
-                  <label>
-                    Service Name
-                    <input
-                      type="text"
-                      value={serviceForm.name}
-                      onChange={(event) => onServiceFormChange('name', event.target.value)}
-                      placeholder="Meta Ad Management"
-                      required
-                    />
-                  </label>
-                  <label>
-                    Category
-                    <input
-                      type="text"
-                      value={serviceForm.category}
-                      onChange={(event) => onServiceFormChange('category', event.target.value)}
-                      placeholder="Growth Marketing"
-                    />
-                  </label>
-                  <label>
-                    Base Monthly Rate
-                    <input
-                      type="number"
-                      min="0"
-                      value={serviceForm.baseRate}
-                      onChange={(event) => onServiceFormChange('baseRate', event.target.value)}
-                      placeholder="2400"
-                    />
-                  </label>
-                </div>
-                <div className="capture-footer">
-                  <p>Services can be selected directly in the lead entry workflow.</p>
-                  <button type="submit" className="capture-submit">
-                    Add Service
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </div>
-        </GlassCard>
-
-        <GlassCard className={panelClassName('clients', 'bento-panel-clients')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Client Priority</h3>
-              <span>{clients.length} total clients</span>
+          <GlassCard className="panel classic-clients-panel">
+            <div className="panel-head">
+              <h3>Clients</h3>
+              <span>{clientRankings.length} visible</span>
             </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'clients' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('clients')}
-            >
-              {expandedPanel === 'clients' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
             <div className="client-priority-list tight">
               {clientRankings.map((client) => (
                 <div key={client.id} className="client-priority-row">
@@ -1838,83 +1673,14 @@ function DashboardView({
                     <p>{client.activeDealCount} active leads</p>
                   </div>
                   <div className="client-priority-meta">
-                    <strong>{formatCurrency(Number(client.retainer || 0))}</strong>
-                    <span>{formatCompactCurrency(client.totalValue)} pipeline</span>
+                    <strong>{formatCurrency(client.totalValue)}</strong>
+                    <span>{client.contactName || 'Contact not set'}</span>
                   </div>
                 </div>
               ))}
             </div>
-          </div>
-        </GlassCard>
-
-        <GlassCard className={panelClassName('intake', 'bento-panel-intake')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>Recent Inputs</h3>
-              <span>{intakeLog.length} entries</span>
-            </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'intake' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('intake')}
-            >
-              {expandedPanel === 'intake' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
-            <div className="intake-log-list tight">
-              {intakePreview.length ? (
-                intakePreview.map((entry) => (
-                  <div key={entry.id} className="intake-log-row">
-                    <span className="status-pill is-dark">{entry.type}</span>
-                    <div>
-                      <h4>{entry.title}</h4>
-                      <p>{entry.detail}</p>
-                      <small>{entry.createdAt}</small>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <p className="empty-note">No manual entries yet. Use Quick Capture Hub to add your first lead.</p>
-              )}
-            </div>
-          </div>
-        </GlassCard>
-
-        <GlassCard className={panelClassName('ai', 'bento-panel-ai')}>
-          <div className="panel-head bento-head">
-            <div>
-              <h3>AI Snapshot</h3>
-              <span>{aiModel}</span>
-            </div>
-            <button
-              type="button"
-              className={`panel-expand-btn ${expandedPanel === 'ai' ? 'active' : ''}`}
-              onClick={() => togglePanelFocus('ai')}
-            >
-              {expandedPanel === 'ai' ? 'Close Focus' : 'Focus'}
-            </button>
-          </div>
-          <div className="panel-scroll-body">
-            <div className="ai-snapshot-content">
-              {aiSummary ? <p>{aiSummary}</p> : <p>Generate a concise GPT-5 nano ops summary for today.</p>}
-            </div>
-            {aiError ? <p className="ai-error">{aiError}</p> : null}
-            <button className="capture-submit ai-snapshot-btn" onClick={onGenerateAiSnapshot} disabled={aiLoading}>
-              {aiLoading ? (
-                <>
-                  <Loader2 size={14} className="spin-icon" />
-                  Generating
-                </>
-              ) : (
-                <>
-                  <Sparkles size={14} />
-                  Generate Snapshot
-                </>
-              )}
-            </button>
-          </div>
-        </GlassCard>
+          </GlassCard>
+        </div>
       </section>
 
       <AgentChatDock
@@ -1928,7 +1694,6 @@ function DashboardView({
     </div>
   );
 }
-
 function AgentChatDock({
   agentMessages,
   agentInput,
